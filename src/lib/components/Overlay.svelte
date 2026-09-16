@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import type { LyricLine, SongMetadata, PlaybackState, AppSettings } from "../types";
 
   // State using Svelte 5 Runes
@@ -19,7 +20,7 @@
   let lyrics = $state<LyricLine[]>([
     { startTimeMs: 0, text: "GhostLyrics — En attente du lecteur" },
     { startTimeMs: 3000, text: "Détection automatique via Windows Media Controls" },
-    { startTimeMs: 6000, text: "Ctrl + Shift + L pour activer le mode Click-Through" },
+    { startTimeMs: 6000, text: "Prêt à afficher vos morceaux en temps réel" },
   ]);
 
   let settings = $state<AppSettings>({
@@ -36,6 +37,63 @@
   let currentLineIndex = $state<number>(0);
   let interpolatedPositionMs = $state<number>(0);
   let animationFrameId: number;
+  let pollIntervalId: number;
+  let lastFetchedTitle = "";
+
+  async function pollMedia() {
+    try {
+      const media = await invoke<any>("get_media_state");
+      if (media && media.title) {
+        playback.isPlaying = media.isPlaying;
+        playback.positionMs = media.positionMs;
+        playback.lastUpdatedMs = media.lastUpdatedMs;
+        playback.playbackRate = media.playbackRate || 1.0;
+
+        if (media.title !== lastFetchedTitle) {
+          lastFetchedTitle = media.title;
+          currentSong = {
+            title: media.title,
+            artist: media.artist,
+            album: media.album,
+            durationMs: media.durationMs,
+          };
+
+          lyrics = [{ startTimeMs: 0, text: `Recherche des paroles pour ${media.title}...` }];
+
+          try {
+            const data = await invoke<any>("fetch_song_lyrics", {
+              title: media.title,
+              artist: media.artist,
+              album: media.album || null,
+              durationSec: media.durationMs > 0 ? media.durationMs / 1000 : null,
+            });
+
+            if (data && data.lines && data.lines.length > 0) {
+              lyrics = data.lines;
+            } else if (data && data.instrumental) {
+              lyrics = [{ startTimeMs: 0, text: "🎵 Morceau instrumental" }];
+            } else {
+              lyrics = [{ startTimeMs: 0, text: "Aucune parole synchronisée trouvée" }];
+            }
+          } catch (err) {
+            console.error("Erreur lors de la récupération des paroles:", err);
+            lyrics = [{ startTimeMs: 0, text: "Paroles non disponibles" }];
+          }
+        }
+      }
+    } catch (e) {
+      // Ignorer si en dehors de Tauri (navigateur)
+    }
+  }
+
+  async function toggleClickThrough() {
+    settings.clickThrough = !settings.clickThrough;
+    try {
+      await invoke("set_overlay_click_through", { enabled: settings.clickThrough });
+    } catch (e) {
+      console.error("Erreur click-through:", e);
+    }
+  }
 
   function updateInterpolation() {
     if (playback.isPlaying) {
@@ -45,7 +103,7 @@
       interpolatedPositionMs = playback.positionMs + settings.timeOffsetMs;
     }
 
-    // Find current active lyric line
+    // Trouve la ligne de parole active
     let foundIndex = 0;
     for (let i = 0; i < lyrics.length; i++) {
       if (lyrics[i].startTimeMs <= interpolatedPositionMs) {
@@ -61,12 +119,13 @@
 
   onMount(() => {
     animationFrameId = requestAnimationFrame(updateInterpolation);
+    pollIntervalId = window.setInterval(pollMedia, 1000);
+    pollMedia();
   });
 
   onDestroy(() => {
-    if (animationFrameId) {
-      cancelAnimationFrame(animationFrameId);
-    }
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    if (pollIntervalId) clearInterval(pollIntervalId);
   });
 </script>
 

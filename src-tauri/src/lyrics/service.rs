@@ -142,3 +142,21 @@ fn sanitize_filename(name: &str) -> String {
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_live_fetch_lyrics() {
+        let service = LyricsService::new();
+        let res = service.fetch_lyrics("Bohemian Rhapsody", "Queen", None, None).await;
+        if let Ok(lyrics) = res {
+            println!("Morceau trouvé : {} - {}", lyrics.track_name, lyrics.artist_name);
+            println!("Nombre de lignes synchronisées : {}", lyrics.lines.len());
+            assert!(!lyrics.lines.is_empty());
+            assert!(lyrics.lines[0].start_time_ms >= 0);
+        }
+    }
+}
+
