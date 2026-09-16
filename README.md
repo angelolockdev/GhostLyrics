@@ -87,6 +87,24 @@ GhostLyrics/
 
 ---
 
+## 📦 Releases Automatiques Windows
+
+Le projet inclut un workflow GitHub Actions automatisé ([`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml)) qui compile l'application, génère les installeurs Windows (`.exe` NSIS et `.msi`) et publie la release GitHub.
+
+### Créer une nouvelle version
+
+```bash
+# 1. Créer un tag de version (ex: v0.1.0)
+git tag v0.1.0
+
+# 2. Pousser le tag pour déclencher le build et la release
+git push origin v0.1.0
+```
+
+Vous pouvez également déclencher manuellement la création d'une release depuis l'onglet **Actions** de votre dépôt GitHub via le bouton **Run workflow**.
+
+---
+
 ## 📄 Licence
 
 Ce projet est distribué sous licence libre **MIT**. Consultez le fichier [LICENSE](LICENSE) pour plus d'informations.
