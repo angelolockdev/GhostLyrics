@@ -1,6 +1,6 @@
 [package]
 name = "ghost-lyrics"
-version = "0.1.0"
+version = "0.1.4"
 description = "Open-source floating synced lyrics overlay for Windows"
 authors = ["Angelo LOCK TO HANG"]
 edition = "2021"

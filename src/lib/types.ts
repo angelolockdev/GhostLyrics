@@ -41,6 +41,8 @@ export interface LyricsData {
   plainLyrics?: string;
   syncedLyrics?: string;
   lines: LyricLine[];
+  source?: string;
+  isSynced?: boolean;
 }
 
 export type DisplayMode = "standard" | "glass" | "ghost";

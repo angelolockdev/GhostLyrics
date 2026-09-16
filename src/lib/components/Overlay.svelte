@@ -53,6 +53,8 @@
   let hasDetectedPlayer = $state<boolean>(false);
   let isDemoMode = $state<boolean>(false);
   let isFetchingLyrics = $state<boolean>(false);
+  let currentLyricsSource = $state<string>("");
+  let isCurrentSynced = $state<boolean>(true);
   let currentLineIndex = $state<number>(0);
   let interpolatedPositionMs = $state<number>(0);
   let currentScrollY = $state<number>(0);
@@ -115,6 +117,7 @@
 
   async function loadLyricsForSong(title: string, artist: string, album?: string, durationMs?: number) {
     isFetchingLyrics = true;
+    currentLyricsSource = "";
     lyrics = [{ startTimeMs: 0, text: `Recherche des paroles pour "${title}"...` }];
     lineElements = [];
     currentLineIndex = 0;
@@ -130,17 +133,23 @@
 
       if (data && data.lines && data.lines.length > 0) {
         lyrics = data.lines;
+        currentLyricsSource = data.source || "LRCLIB";
+        isCurrentSynced = data.isSynced !== false;
       } else if (data && data.instrumental) {
         lyrics = [{ startTimeMs: 0, text: "🎵 Morceau instrumental identifié" }];
+        currentLyricsSource = "Instrumental";
+        isCurrentSynced = true;
       } else {
         lyrics = [
-          { startTimeMs: 0, text: `Aucune parole synchronisée pour "${title}"` },
+          { startTimeMs: 0, text: `Aucune parole trouvée pour "${title}"` },
           { startTimeMs: 4000, text: "Vérifiez le titre ou lancez un autre morceau" },
         ];
+        currentLyricsSource = "";
       }
     } catch (err) {
-      console.error("Erreur LRCLIB:", err);
-      lyrics = [{ startTimeMs: 0, text: "Paroles non trouvées sur LRCLIB" }];
+      console.error("Erreur recherche paroles:", err);
+      lyrics = [{ startTimeMs: 0, text: "Paroles introuvables (LRCLIB & lyrics.ovh)" }];
+      currentLyricsSource = "";
     } finally {
       isFetchingLyrics = false;
     }
@@ -337,7 +346,14 @@
       </div>
 
       {#if isFetchingLyrics}
-        <span class="badge badge-loading">⏳ LRCLIB...</span>
+        <span class="badge badge-loading">⏳ Recherche...</span>
+      {:else if currentLyricsSource}
+        <span
+          class="badge {isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
+          title={isCurrentSynced ? "Paroles synchronisées à la milliseconde (.lrc)" : "Paroles textuelles défilantes avec rythme temporel estimé"}
+        >
+          {isCurrentSynced ? '🟢 ' : '🟡 '}{currentLyricsSource}
+        </span>
       {/if}
 
       <!-- Boutons de contrôle -->
@@ -587,6 +603,18 @@
     background: rgba(56, 189, 248, 0.2);
     color: #38bdf8;
     border: 1px solid rgba(56, 189, 248, 0.3);
+  }
+
+  .badge-synced {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+  }
+
+  .badge-paced {
+    background: rgba(234, 179, 8, 0.2);
+    color: #facc15;
+    border: 1px solid rgba(234, 179, 8, 0.35);
   }
 
   .window-controls {
