@@ -5,18 +5,13 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Nom du tag de version (ex: v0.1.0)'
-        required: false
-        default: 'v0.1.0'
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build & Publish Windows Release
+    name: Build and Publish Windows Release
     runs-on: windows-latest
 
     steps:
@@ -51,20 +46,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name }}
-          releaseName: 'GhostLyrics ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name }}'
-          releaseBody: |
-            ## 👻 GhostLyrics Release ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag_name }}
-
-            Alternative open source et ultra-légère à Lyric Overlay pour Windows.
-
-            ### ✨ Nouveautés & Fonctionnalités
-            - **Détection universelle :** Suivi automatique de la lecture via Windows WinRT GSMTC (Spotify, Apple Music, YouTube Music, VLC, etc.)
-            - **Paroles synchronisées :** Intégration en direct avec l'API publique LRCLIB
-            - **Mode Fantôme (*Click-Through*) :** Raccourci global pour cliquer librement au travers en jeu
-            - **Personnalisation :** Panneau de configuration pour les styles, l'opacité et le décalage temporel
-
-            ### 📦 Téléchargement
-            Téléchargez l'installateur Windows ci-dessous (`.exe` NSIS ou `.msi`).
+          tagName: 'v__VERSION__'
+          releaseName: 'GhostLyrics v__VERSION__'
+          releaseBody: 'GhostLyrics — Alternative open source à Lyric Overlay pour Windows. Téléchargez les installeurs (.exe NSIS ou .msi) ci-dessous.'
           releaseDraft: false
           prerelease: false
