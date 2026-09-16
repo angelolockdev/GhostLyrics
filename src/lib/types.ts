@@ -43,7 +43,10 @@ export interface LyricsData {
   lines: LyricLine[];
 }
 
+export type DisplayMode = "standard" | "glass" | "ghost";
+
 export interface AppSettings {
+  displayMode: DisplayMode;
   fontSize: number;
   opacity: number;
   textColor: string;

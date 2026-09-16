@@ -26,6 +26,7 @@
   ]);
 
   let settings = $state<AppSettings>({
+    displayMode: "standard",
     fontSize: 22,
     opacity: 0.88,
     textColor: "rgba(255, 255, 255, 0.45)",
@@ -35,6 +36,19 @@
     hotkey: "Ctrl+Shift+L",
     clickThrough: false,
   });
+
+  async function cycleDisplayMode() {
+    const modes: ("standard" | "glass" | "ghost")[] = ["standard", "glass", "ghost"];
+    const nextIdx = (modes.indexOf(settings.displayMode) + 1) % modes.length;
+    settings.displayMode = modes[nextIdx];
+    if (settings.displayMode === "standard") settings.opacity = 0.88;
+    else if (settings.displayMode === "glass") settings.opacity = 0.28;
+    else if (settings.displayMode === "ghost") settings.opacity = 0.0;
+
+    try {
+      localStorage.setItem("ghost_lyrics_settings", JSON.stringify($state.snapshot(settings)));
+    } catch (e) {}
+  }
 
   let hasDetectedPlayer = $state<boolean>(false);
   let isDemoMode = $state<boolean>(false);
@@ -270,10 +284,9 @@
 </script>
 
 <div
-  class="overlay-container"
+  class="overlay-container mode-{settings.displayMode}"
   style="
-    background: {settings.backgroundColor};
-    opacity: {settings.opacity};
+    --bg-opacity: {settings.opacity};
     font-size: {settings.fontSize}px;
   "
 >
@@ -290,6 +303,22 @@
 
     <!-- Badges d'état et contrôles de la fenêtre -->
     <div class="header-actions">
+      <!-- Sélecteur de mode d'affichage rapide -->
+      <button
+        class="mode-pill-btn"
+        onclick={cycleDisplayMode}
+        title="Style d'affichage : Standard / Verre / Fantôme (clic pour basculer)"
+        aria-label="Changer de mode"
+      >
+        {#if settings.displayMode === 'standard'}
+          🎴 Standard
+        {:else if settings.displayMode === 'glass'}
+          🪟 Verre
+        {:else}
+          👻 Fantôme
+        {/if}
+      </button>
+
       <!-- Indicateur d'état du lecteur -->
       <div class="player-status-pill" title="Statut de la détection Windows Media Controls">
         {#if isDemoMode}
@@ -372,13 +401,49 @@
     box-sizing: border-box;
     padding: 10px 16px;
     border-radius: 12px;
+    overflow: hidden;
+    user-select: none;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    transition: background 0.25s ease, border 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  /* Mode 1: Standard (Verre dépoli complet) */
+  .mode-standard {
+    background: rgba(15, 15, 20, var(--bg-opacity, 0.88));
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 10px 36px 0 rgba(0, 0, 0, 0.45);
-    overflow: hidden;
-    user-select: none;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  /* Mode 2: Verre Discret (Subtil et léger) */
+  .mode-glass {
+    background: rgba(15, 15, 20, var(--bg-opacity, 0.28));
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: none;
+  }
+
+  /* Mode 3: Fantôme Minimaliste (Fond 100% invisible, seules les paroles flottent) */
+  .mode-ghost {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* En mode Fantôme, l'en-tête est très discret au repos pour un rendu épuré */
+  .mode-ghost .overlay-header {
+    opacity: 0.15;
+    transition: opacity 0.2s ease;
+    border-bottom: 1px solid transparent;
+  }
+
+  .mode-ghost:hover .overlay-header {
+    opacity: 1;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .overlay-header {
@@ -426,13 +491,15 @@
     font-size: 0.85em;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
   }
 
   .track-artist {
-    color: #94a3b8;
+    color: #cbd5e1;
     font-size: 0.8em;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
   }
 
   .header-actions {
@@ -442,11 +509,32 @@
     flex-shrink: 0;
   }
 
+  .mode-pill-btn {
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #f1f5f9;
+    font-size: 0.72em;
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .mode-pill-btn:hover {
+    background: rgba(56, 189, 248, 0.25);
+    border-color: rgba(56, 189, 248, 0.5);
+    color: #38bdf8;
+  }
+
   .player-status-pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(0, 0, 0, 0.4);
+    background: rgba(0, 0, 0, 0.45);
     padding: 3px 10px;
     border-radius: 9999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -505,10 +593,10 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.4);
     padding: 2px 4px;
     border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .ctrl-btn {
@@ -559,16 +647,25 @@
 
   .lyric-line {
     text-align: center;
-    padding: 6px 14px;
+    padding: 6px 16px;
     transition: all 0.3s ease;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.4;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+    /* Ombres haute intensité : garantit une lisibilité totale même sans aucun fond */
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.95),
+      0 0 8px rgba(0, 0, 0, 0.9),
+      0 0 2px #000000;
   }
 
   .lyric-line.active {
-    font-weight: 700;
+    font-weight: 800;
     transform: scale(1.06);
-    text-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+    /* Halo lumineux accentué + contour noir profond */
+    text-shadow:
+      0 0 16px rgba(56, 189, 248, 0.6),
+      0 2px 6px #000000,
+      0 0 8px #000000,
+      0 0 2px #000000;
   }
 </style>

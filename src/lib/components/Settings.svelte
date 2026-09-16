@@ -4,6 +4,7 @@
   import type { AppSettings } from "../types";
 
   let settings = $state<AppSettings>({
+    displayMode: "standard",
     fontSize: 22,
     opacity: 0.88,
     textColor: "rgba(255, 255, 255, 0.45)",
@@ -37,6 +38,18 @@
     } catch (e) {
       console.error("Erreur sync settings:", e);
     }
+  }
+
+  function setDisplayMode(mode: "standard" | "glass" | "ghost") {
+    settings.displayMode = mode;
+    if (mode === "standard") {
+      settings.opacity = 0.88;
+    } else if (mode === "glass") {
+      settings.opacity = 0.28;
+    } else if (mode === "ghost") {
+      settings.opacity = 0.0;
+    }
+    notifySettingsChanged();
   }
 
   function adjustOffset(amount: number) {
@@ -87,6 +100,52 @@
   </header>
 
   <div class="settings-grid">
+    <!-- Section Modes d'Affichage -->
+    <div class="card card-modes">
+      <h3>🎭 Modes d'Affichage</h3>
+      <p class="description">
+        Choisissez le niveau d'incrustation sur votre écran. Le texte reste toujours 100% net et contrasté.
+      </p>
+
+      <div class="mode-cards">
+        <button
+          type="button"
+          class="mode-card {settings.displayMode === 'standard' ? 'mode-active' : ''}"
+          onclick={() => setDisplayMode('standard')}
+        >
+          <span class="mode-icon">🎴</span>
+          <div class="mode-info">
+            <strong>Standard</strong>
+            <small>Fond sombre dépoli classique pour un confort de lecture optimal.</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card {settings.displayMode === 'glass' ? 'mode-active' : ''}"
+          onclick={() => setDisplayMode('glass')}
+        >
+          <span class="mode-icon">🪟</span>
+          <div class="mode-info">
+            <strong>Verre Discret</strong>
+            <small>Translucide et léger, laisse entrevoir vos fenêtres sans gêner.</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card {settings.displayMode === 'ghost' ? 'mode-active' : ''}"
+          onclick={() => setDisplayMode('ghost')}
+        >
+          <span class="mode-icon">👻</span>
+          <div class="mode-info">
+            <strong>Fantôme Pur</strong>
+            <small>Zéro boîte, zéro fond. Seules les paroles flottent sur votre écran.</small>
+          </div>
+        </button>
+      </div>
+    </div>
+
     <!-- Section Test & Diagnostic -->
     <div class="card card-highlight">
       <h3>🧪 Test & Démonstration immédiate</h3>
@@ -131,7 +190,7 @@
 
     <!-- Section Affichage & Styles -->
     <div class="card">
-      <h3>Apparence de l'overlay</h3>
+      <h3>Ajustements fins & Styles</h3>
 
       <div class="field">
         <label for="fontSize">Taille de la police : <strong>{settings.fontSize}px</strong></label>
@@ -146,16 +205,20 @@
       </div>
 
       <div class="field">
-        <label for="opacity">Opacité de l'arrière-plan : <strong>{Math.round(settings.opacity * 100)}%</strong></label>
+        <div class="field-header">
+          <label for="opacity">Opacité de l'arrière-plan : <strong>{Math.round(settings.opacity * 100)}%</strong></label>
+          <span class="pill-guarantee">Texte 100% lisible</span>
+        </div>
         <input
           id="opacity"
           type="range"
-          min="0.1"
+          min="0"
           max="1"
           step="0.05"
           bind:value={settings.opacity}
           oninput={notifySettingsChanged}
         />
+        <small class="field-hint">Ce curseur n'atténue que la boîte de fond. Les paroles restent nettes avec ombres portées.</small>
       </div>
 
       <div class="field-row">
@@ -398,6 +461,79 @@
     font-size: 0.85rem;
     font-weight: 600;
     color: #38bdf8;
+  }
+
+  .mode-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .mode-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 14px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .mode-card:hover {
+    border-color: #475569;
+    background: #1e293b;
+  }
+
+  .mode-card.mode-active {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+  }
+
+  .mode-icon {
+    font-size: 1.5rem;
+  }
+
+  .mode-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .mode-info strong {
+    font-size: 0.9rem;
+    color: #f8fafc;
+  }
+
+  .mode-info small {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    line-height: 1.35;
+  }
+
+  .field-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .pill-guarantee {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    font-weight: 600;
+  }
+
+  .field-hint {
+    font-size: 0.75rem;
+    color: #64748b;
   }
 
   .info-list {
