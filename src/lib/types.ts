@@ -9,6 +9,19 @@ export interface SongMetadata {
   artist: string;
   album?: string;
   durationMs: number;
+  sourceApp?: string;
+}
+
+export interface CurrentMediaState {
+  title: string;
+  artist: string;
+  album: string;
+  durationMs: number;
+  positionMs: number;
+  isPlaying: boolean;
+  playbackRate: number;
+  lastUpdatedMs: number;
+  sourceApp: string;
 }
 
 export interface PlaybackState {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { emit } from "@tauri-apps/api/event";
   import type { AppSettings } from "../types";
 
   let settings = $state<AppSettings>({
@@ -12,6 +13,11 @@
     clickThrough: false,
   });
 
+  let demoStatus = $state<string>("");
+  let manualTitle = $state<string>("Bohemian Rhapsody");
+  let manualArtist = $state<string>("Queen");
+  let manualStatus = $state<string>("");
+
   function adjustOffset(amount: number) {
     settings.timeOffsetMs += amount;
   }
@@ -19,15 +25,87 @@
   function resetOffset() {
     settings.timeOffsetMs = 0;
   }
+
+  async function launchDemo() {
+    demoStatus = "Lancement de la démo...";
+    try {
+      await emit("play_demo_song", {
+        title: "Bohemian Rhapsody",
+        artist: "Queen",
+        durationMs: 354000,
+      });
+      demoStatus = "✅ Morceau démo envoyé sur l'overlay !";
+      setTimeout(() => { demoStatus = ""; }, 4000);
+    } catch (e) {
+      demoStatus = "❌ Erreur : " + String(e);
+    }
+  }
+
+  async function searchManualSong() {
+    if (!manualTitle.trim()) return;
+    manualStatus = "Recherche en cours...";
+    try {
+      await emit("play_manual_song", {
+        title: manualTitle.trim(),
+        artist: manualArtist.trim(),
+      });
+      manualStatus = "✅ Morceau envoyé à l'overlay !";
+      setTimeout(() => { manualStatus = ""; }, 4000);
+    } catch (e) {
+      manualStatus = "❌ Erreur : " + String(e);
+    }
+  }
 </script>
 
 <div class="settings-page">
   <header class="settings-header">
     <h2>⚙️ Paramètres GhostLyrics</h2>
-    <p>Personnalisez l'affichage, les raccourcis et la synchronisation de l'overlay.</p>
+    <p>Personnalisez l'affichage, les raccourcis et testez la synchronisation des paroles.</p>
   </header>
 
   <div class="settings-grid">
+    <!-- Section Test & Diagnostic -->
+    <div class="card card-highlight">
+      <h3>🧪 Test & Démonstration immédiate</h3>
+      <p class="description">
+        Vérifiez instantanément le fonctionnement de l'overlay et de la recherche LRCLIB sans attendre Spotify.
+      </p>
+      <div class="demo-actions">
+        <button class="primary-btn" onclick={launchDemo}>
+          🎵 Lancer un morceau test (Queen - Bohemian Rhapsody)
+        </button>
+        {#if demoStatus}
+          <span class="status-msg">{demoStatus}</span>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Section Recherche Manuelle -->
+    <div class="card">
+      <h3>🔍 Recherche manuelle de paroles</h3>
+      <p class="description">
+        Affichez les paroles d'une chanson spécifique même si elle n'est pas détectée automatiquement.
+      </p>
+      <div class="manual-form">
+        <div class="field-row">
+          <div class="field" style="flex: 2;">
+            <label for="mTitle">Titre de la chanson</label>
+            <input id="mTitle" type="text" bind:value={manualTitle} placeholder="Ex: Bohemian Rhapsody" />
+          </div>
+          <div class="field" style="flex: 1;">
+            <label for="mArtist">Artiste</label>
+            <input id="mArtist" type="text" bind:value={manualArtist} placeholder="Ex: Queen" />
+          </div>
+        </div>
+        <button class="secondary-btn" onclick={searchManualSong}>
+          Afficher sur l'overlay
+        </button>
+        {#if manualStatus}
+          <span class="status-msg">{manualStatus}</span>
+        {/if}
+      </div>
+    </div>
+
     <!-- Section Affichage & Styles -->
     <div class="card">
       <h3>Apparence de l'overlay</h3>
@@ -79,21 +157,25 @@
 
     <!-- Section Raccourcis & Mode Fantôme -->
     <div class="card">
-      <h3>Mode Fantôme (Click-Through)</h3>
-      <p class="description">Permet à vos clics de souris de traverser l'overlay pour ne pas perturber vos jeux.</p>
+      <h3>Mode Fantôme (Click-Through) & Zone de notification</h3>
+      <p class="description">
+        L'overlay se contrôle facilement depuis l'en-tête et depuis la barre des tâches Windows :
+      </p>
 
-      <div class="field">
-        <label for="hotkey">Raccourci global :</label>
-        <input id="hotkey" type="text" bind:value={settings.hotkey} readonly />
-        <small>Appuyez sur ce raccourci n'importe quand pour verrouiller/déverrouiller l'overlay.</small>
+      <div class="info-list">
+        <div class="info-item">
+          <strong>🖱️ Contrôles d'en-tête :</strong>
+          <span>Utilisez <code>⚙️</code> pour les paramètres, <code>—</code> pour réduire dans la barre d'icônes cachées, et <code>✕</code> pour quitter.</span>
+        </div>
+        <div class="info-item">
+          <strong>📥 Barre d'icônes cachées (System Tray) :</strong>
+          <span>GhostLyrics se loge près de l'horloge Windows. Cliquez dessus pour afficher ou masquer l'overlay à tout instant.</span>
+        </div>
+        <div class="info-item">
+          <strong>👻 Raccourci global :</strong>
+          <span><code>Ctrl + Shift + L</code> verrouille l'overlay en mode transparent aux clics.</span>
+        </div>
       </div>
-    </div>
-
-    <!-- Section Fichiers Locaux -->
-    <div class="card">
-      <h3>Paroles locales (.lrc)</h3>
-      <p class="description">Si une chanson n'est pas sur LRCLIB, vous pouvez charger manuellement un fichier .lrc.</p>
-      <button class="primary-btn">Importer un fichier .lrc</button>
     </div>
   </div>
 </div>
@@ -179,10 +261,6 @@
     font-size: 0.9rem;
   }
 
-  small {
-    color: #64748b;
-    font-size: 0.75rem;
-  }
 
   .offset-controls {
     display: flex;
@@ -231,9 +309,61 @@
 
   .primary-btn {
     background: #0284c7;
+    font-weight: 600;
   }
 
   .primary-btn:hover {
     background: #0369a1;
+  }
+
+  .secondary-btn {
+    background: #475569;
+    font-weight: 600;
+    align-self: flex-start;
+  }
+
+  .secondary-btn:hover {
+    background: #64748b;
+  }
+
+  .card-highlight {
+    border-color: #0284c7;
+    background: linear-gradient(180deg, #1e293b 0%, #172554 100%);
+  }
+
+  .demo-actions, .manual-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .status-msg {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #38bdf8;
+  }
+
+  .info-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .info-item {
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #cbd5e1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  code {
+    background: #0f172a;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #38bdf8;
+    font-family: monospace;
+    font-size: 0.9em;
   }
 </style>

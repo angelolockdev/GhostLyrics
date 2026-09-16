@@ -41,3 +41,33 @@ pub fn show_settings_window(app: AppHandle) -> Result<(), String> {
         Err("Fenêtre de paramètres introuvable".to_string())
     }
 }
+
+#[tauri::command]
+pub fn minimize_overlay(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("overlay") {
+        window.hide().map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        Err("Fenêtre overlay introuvable".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn toggle_overlay(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("overlay") {
+        if window.is_visible().unwrap_or(false) {
+            window.hide().map_err(|e| e.to_string())?;
+        } else {
+            window.show().map_err(|e| e.to_string())?;
+            window.set_focus().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    } else {
+        Err("Fenêtre overlay introuvable".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn close_app(app: AppHandle) {
+    app.exit(0);
+}
