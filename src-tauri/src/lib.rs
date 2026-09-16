@@ -1,11 +1,12 @@
 pub mod commands;
 pub mod lyrics;
 pub mod media;
+pub mod updater;
 pub mod window;
 
 use commands::{
-    close_app, fetch_song_lyrics, get_media_state, minimize_overlay, set_overlay_click_through,
-    show_settings_window, toggle_overlay, AppState,
+    check_for_updates, close_app, download_and_install_update, fetch_song_lyrics, get_media_state,
+    minimize_overlay, set_overlay_click_through, show_settings_window, toggle_overlay, AppState,
 };
 use lyrics::LyricsService;
 use tauri::menu::{Menu, MenuItem};
@@ -27,6 +28,8 @@ pub fn run() {
             minimize_overlay,
             toggle_overlay,
             close_app,
+            check_for_updates,
+            download_and_install_update,
         ])
         .setup(|app| {
             // Configuration de l'overlay au démarrage

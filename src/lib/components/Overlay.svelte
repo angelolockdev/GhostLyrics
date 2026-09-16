@@ -55,6 +55,7 @@
   let isFetchingLyrics = $state<boolean>(false);
   let currentLyricsSource = $state<string>("");
   let isCurrentSynced = $state<boolean>(true);
+  let availableUpdate = $state<string | null>(null);
   let currentLineIndex = $state<number>(0);
   let interpolatedPositionMs = $state<number>(0);
   let currentScrollY = $state<number>(0);
@@ -281,6 +282,17 @@
     } catch (e) {
       console.warn("Écouteurs d'événements non activés:", e);
     }
+
+    // 4. Vérification silencieuse des mises à jour au démarrage
+    if (settings.autoCheckUpdates !== false) {
+      try {
+        invoke<any>("check_for_updates").then((info) => {
+          if (info && info.hasUpdate) {
+            availableUpdate = info.latestVersion;
+          }
+        }).catch(() => {});
+      } catch (e) {}
+    }
   });
 
   onDestroy(() => {
@@ -354,6 +366,16 @@
         >
           {isCurrentSynced ? '🟢 ' : '🟡 '}{currentLyricsSource}
         </span>
+      {/if}
+
+      {#if availableUpdate}
+        <button
+          class="badge badge-update-alert"
+          onclick={handleOpenSettings}
+          title="Nouvelle version v{availableUpdate} disponible ! Cliquez pour ouvrir les paramètres et mettre à jour."
+        >
+          ✨ v{availableUpdate} dispo
+        </button>
       {/if}
 
       <!-- Boutons de contrôle -->
@@ -615,6 +637,21 @@
     background: rgba(234, 179, 8, 0.2);
     color: #facc15;
     border: 1px solid rgba(234, 179, 8, 0.35);
+  }
+
+  .badge-update-alert {
+    background: rgba(168, 85, 247, 0.25);
+    color: #d8b4fe;
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    animation: pulse 2.5s infinite;
+  }
+
+  .badge-update-alert:hover {
+    background: rgba(168, 85, 247, 0.45);
+    color: #ffffff;
+    transform: scale(1.05);
   }
 
   .window-controls {

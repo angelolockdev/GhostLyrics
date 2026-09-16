@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { emit } from "@tauri-apps/api/event";
-  import type { AppSettings } from "../types";
+  import { onMount, onDestroy } from "svelte";
+  import { emit, listen } from "@tauri-apps/api/event";
+  import { invoke } from "@tauri-apps/api/core";
+  import type { AppSettings, UpdateInfo, DownloadProgress } from "../types";
 
   let settings = $state<AppSettings>({
     displayMode: "standard",
@@ -13,6 +14,7 @@
     timeOffsetMs: 0,
     hotkey: "Ctrl+Shift+L",
     clickThrough: false,
+    autoCheckUpdates: true,
   });
 
   let demoStatus = $state<string>("");
@@ -20,7 +22,17 @@
   let manualArtist = $state<string>("Queen");
   let manualStatus = $state<string>("");
 
-  onMount(() => {
+  // État des Mises à jour
+  let updateInfo = $state<UpdateInfo | null>(null);
+  let isCheckingUpdate = $state<boolean>(false);
+  let updateStatusMessage = $state<string>("");
+  let isDownloadingUpdate = $state<boolean>(false);
+  let downloadPercent = $state<number>(0);
+  let downloadDetails = $state<string>("");
+  let unlistenProgress: (() => void) | null = null;
+  let unlistenRestart: (() => void) | null = null;
+
+  onMount(async () => {
     const saved = localStorage.getItem("ghost_lyrics_settings");
     if (saved) {
       try {
@@ -28,7 +40,63 @@
         Object.assign(settings, parsed);
       } catch (e) {}
     }
+
+    try {
+      unlistenProgress = await listen<DownloadProgress>("update_download_progress", (event) => {
+        downloadPercent = event.payload.percent;
+        const mbDl = (event.payload.downloadedBytes / (1024 * 1024)).toFixed(1);
+        const mbTot = event.payload.totalBytes > 0 ? (event.payload.totalBytes / (1024 * 1024)).toFixed(1) : "?";
+        downloadDetails = `${mbDl} Mo / ${mbTot} Mo (${event.payload.percent}%)`;
+      });
+
+      unlistenRestart = await listen("update_ready_to_restart", () => {
+        downloadDetails = "Téléchargement terminé ! Lancement de l'installeur...";
+      });
+
+      // Si activé, vérifier en arrière-plan au chargement
+      if (settings.autoCheckUpdates !== false) {
+        checkForUpdates(false);
+      }
+    } catch (e) {
+      console.warn("Écouteurs de mise à jour non disponibles:", e);
+    }
   });
+
+  onDestroy(() => {
+    if (unlistenProgress) unlistenProgress();
+    if (unlistenRestart) unlistenRestart();
+  });
+
+  async function checkForUpdates(manual: boolean = true) {
+    isCheckingUpdate = true;
+    if (manual) updateStatusMessage = "Recherche en cours sur GitHub Releases...";
+    try {
+      const res = await invoke<UpdateInfo>("check_for_updates");
+      updateInfo = res;
+      if (res.hasUpdate) {
+        updateStatusMessage = `✨ Nouvelle version disponible : v${res.latestVersion} !`;
+      } else {
+        if (manual) updateStatusMessage = `✅ Vous disposez de la version la plus récente (v${res.currentVersion}).`;
+      }
+    } catch (e) {
+      if (manual) updateStatusMessage = `❌ Impossible de contacter GitHub : ${String(e)}`;
+    } finally {
+      isCheckingUpdate = false;
+    }
+  }
+
+  async function startUpdate() {
+    if (!updateInfo || !updateInfo.downloadUrl) return;
+    isDownloadingUpdate = true;
+    downloadPercent = 0;
+    downloadDetails = "Initialisation du téléchargement...";
+    try {
+      await invoke("download_and_install_update", { downloadUrl: updateInfo.downloadUrl });
+    } catch (e) {
+      isDownloadingUpdate = false;
+      updateStatusMessage = `❌ Erreur lors de l'installation : ${String(e)}`;
+    }
+  }
 
   async function notifySettingsChanged() {
     try {
@@ -288,6 +356,101 @@
         <div class="info-item">
           <strong>👻 Raccourci global :</strong>
           <span><code>Ctrl + Shift + L</code> verrouille l'overlay en mode transparent aux clics.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section Mises à jour du logiciel -->
+    <div class="card card-update">
+      <div class="card-title-row">
+        <h3>🔄 Mises à jour du logiciel</h3>
+        <span class="version-pill">v{updateInfo?.currentVersion || "0.1.4"}</span>
+      </div>
+      <p class="description">
+        GhostLyrics vérifie directement les versions publiées sur GitHub Releases et installe automatiquement les nouvelles fonctionnalités.
+      </p>
+
+      <div class="update-controls">
+        <div class="update-action-row">
+          <button
+            class="btn-primary"
+            onclick={() => checkForUpdates(true)}
+            disabled={isCheckingUpdate || isDownloadingUpdate}
+          >
+            {#if isCheckingUpdate}
+              ⏳ Recherche en cours...
+            {:else}
+              🔍 Rechercher une mise à jour
+            {/if}
+          </button>
+
+          {#if updateStatusMessage}
+            <span class="update-status-msg">{updateStatusMessage}</span>
+          {/if}
+        </div>
+
+        {#if updateInfo && updateInfo.hasUpdate}
+          <div class="update-banner">
+            <div class="update-banner-header">
+              <span class="update-tag">🎉 Version {updateInfo.latestVersion} disponible</span>
+              {#if updateInfo.publishedAt}
+                <span class="update-date">{new Date(updateInfo.publishedAt).toLocaleDateString('fr-FR')}</span>
+              {/if}
+            </div>
+
+            {#if updateInfo.releaseNotes}
+              <div class="release-notes-box">
+                <strong>Notes de version :</strong>
+                <pre class="release-notes-text">{updateInfo.releaseNotes}</pre>
+              </div>
+            {/if}
+
+            <div class="update-buttons-row">
+              <button
+                class="btn-install-update"
+                onclick={startUpdate}
+                disabled={isDownloadingUpdate}
+              >
+                {#if isDownloadingUpdate}
+                  ⏳ Téléchargement en cours...
+                {:else}
+                  ⚡ Mettre à jour automatiquement
+                {/if}
+              </button>
+
+              <a
+                href="https://github.com/angelolockdev/GhostLyrics/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+                class="btn-github-link"
+              >
+                🌐 Voir la release sur GitHub
+              </a>
+            </div>
+
+            {#if isDownloadingUpdate}
+              <div class="progress-section">
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" style="width: {downloadPercent}%;"></div>
+                </div>
+                <div class="progress-labels">
+                  <span>{downloadDetails}</span>
+                  <span>{downloadPercent}%</span>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <div class="auto-check-toggle">
+          <label class="checkbox-label">
+            <input
+              type="checkbox"
+              bind:checked={settings.autoCheckUpdates}
+              onchange={notifySettingsChanged}
+            />
+            <span>Vérifier automatiquement les mises à jour au démarrage</span>
+          </label>
         </div>
       </div>
     </div>
@@ -558,5 +721,220 @@
     color: #38bdf8;
     font-family: monospace;
     font-size: 0.9em;
+  }
+
+  /* Section Mises à jour */
+  .card-update {
+    border-color: rgba(56, 189, 248, 0.25);
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  }
+
+  .card-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+
+  .version-pill {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    background: rgba(56, 189, 248, 0.18);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.35);
+  }
+
+  .update-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 14px;
+  }
+
+  .update-action-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary {
+    background: #0284c7;
+    color: #ffffff;
+    border: none;
+    padding: 9px 16px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #0369a1;
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .update-status-msg {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+
+  .update-banner {
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .update-banner-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .update-tag {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #38bdf8;
+  }
+
+  .update-date {
+    font-size: 0.8rem;
+    color: #64748b;
+  }
+
+  .release-notes-box {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 10px 12px;
+    max-height: 120px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .release-notes-box strong {
+    font-size: 0.8rem;
+    color: #cbd5e1;
+  }
+
+  .release-notes-text {
+    margin: 0;
+    font-size: 0.78rem;
+    color: #94a3b8;
+    font-family: inherit;
+    white-space: pre-wrap;
+    line-height: 1.4;
+  }
+
+  .update-buttons-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .btn-install-update {
+    background: #16a34a;
+    color: #ffffff;
+    border: none;
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-install-update:hover:not(:disabled) {
+    background: #15803d;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.35);
+  }
+
+  .btn-install-update:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .btn-github-link {
+    background: rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
+    text-decoration: none;
+    padding: 9px 14px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+  }
+
+  .btn-github-link:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+  }
+
+  .progress-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .progress-bar-bg {
+    width: 100%;
+    height: 8px;
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: 9999px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #38bdf8, #22c55e);
+    border-radius: 9999px;
+    transition: width 0.2s ease;
+  }
+
+  .progress-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #94a3b8;
+  }
+
+  .auto-check-toggle {
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: #cbd5e1;
+    cursor: pointer;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: #0284c7;
   }
 </style>

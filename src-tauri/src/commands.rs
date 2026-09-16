@@ -71,3 +71,14 @@ pub fn toggle_overlay(app: AppHandle) -> Result<(), String> {
 pub fn close_app(app: AppHandle) {
     app.exit(0);
 }
+
+#[tauri::command]
+pub async fn check_for_updates() -> Result<crate::updater::UpdateInfo, String> {
+    let current_version = env!("CARGO_PKG_VERSION");
+    crate::updater::check_github_update(current_version).await
+}
+
+#[tauri::command]
+pub async fn download_and_install_update(app: AppHandle, download_url: String) -> Result<(), String> {
+    crate::updater::download_and_install(app, &download_url).await
+}

@@ -57,4 +57,21 @@ export interface AppSettings {
   timeOffsetMs: number;
   hotkey: string;
   clickThrough: boolean;
+  autoCheckUpdates?: boolean;
+}
+
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  releaseName: string;
+  releaseNotes: string;
+  downloadUrl: string;
+  publishedAt: string;
+}
+
+export interface DownloadProgress {
+  downloadedBytes: number;
+  totalBytes: number;
+  percent: number;
 }
