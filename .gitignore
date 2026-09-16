@@ -1,0 +1,30 @@
+# Rust / Cargo
+/src-tauri/target/
+Cargo.lock
+**/*.rs.bk
+
+# Node / Web
+node_modules/
+dist/
+.vite/
+
+# Tauri build artifacts
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# IDEs & System files
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local AppData cache during dev
+local_cache/
