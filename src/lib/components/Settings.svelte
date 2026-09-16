@@ -1,13 +1,14 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { emit } from "@tauri-apps/api/event";
   import type { AppSettings } from "../types";
 
   let settings = $state<AppSettings>({
     fontSize: 22,
-    opacity: 0.85,
+    opacity: 0.88,
     textColor: "rgba(255, 255, 255, 0.45)",
-    activeColor: "#ffffff",
-    backgroundColor: "rgba(15, 15, 20, 0.75)",
+    activeColor: "#38bdf8",
+    backgroundColor: "rgba(15, 15, 20, 0.82)",
     timeOffsetMs: 0,
     hotkey: "Ctrl+Shift+L",
     clickThrough: false,
@@ -18,12 +19,34 @@
   let manualArtist = $state<string>("Queen");
   let manualStatus = $state<string>("");
 
+  onMount(() => {
+    const saved = localStorage.getItem("ghost_lyrics_settings");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        Object.assign(settings, parsed);
+      } catch (e) {}
+    }
+  });
+
+  async function notifySettingsChanged() {
+    try {
+      const snap = $state.snapshot(settings);
+      localStorage.setItem("ghost_lyrics_settings", JSON.stringify(snap));
+      await emit("settings_changed", snap);
+    } catch (e) {
+      console.error("Erreur sync settings:", e);
+    }
+  }
+
   function adjustOffset(amount: number) {
     settings.timeOffsetMs += amount;
+    notifySettingsChanged();
   }
 
   function resetOffset() {
     settings.timeOffsetMs = 0;
+    notifySettingsChanged();
   }
 
   async function launchDemo() {
@@ -112,22 +135,50 @@
 
       <div class="field">
         <label for="fontSize">Taille de la police : <strong>{settings.fontSize}px</strong></label>
-        <input id="fontSize" type="range" min="14" max="36" bind:value={settings.fontSize} />
+        <input
+          id="fontSize"
+          type="range"
+          min="14"
+          max="36"
+          bind:value={settings.fontSize}
+          oninput={notifySettingsChanged}
+        />
       </div>
 
       <div class="field">
         <label for="opacity">Opacité de l'arrière-plan : <strong>{Math.round(settings.opacity * 100)}%</strong></label>
-        <input id="opacity" type="range" min="0.1" max="1" step="0.05" bind:value={settings.opacity} />
+        <input
+          id="opacity"
+          type="range"
+          min="0.1"
+          max="1"
+          step="0.05"
+          bind:value={settings.opacity}
+          oninput={notifySettingsChanged}
+        />
       </div>
 
       <div class="field-row">
         <div class="field">
           <label for="activeColor">Couleur active</label>
-          <input id="activeColor" type="color" bind:value={settings.activeColor} />
+          <input
+            id="activeColor"
+            type="color"
+            bind:value={settings.activeColor}
+            oninput={notifySettingsChanged}
+          />
         </div>
         <div class="field">
           <label for="bgColor">Fond</label>
-          <input id="bgColor" type="color" value="#0f0f14" />
+          <input
+            id="bgColor"
+            type="color"
+            value="#0f0f14"
+            oninput={(e) => {
+              settings.backgroundColor = `rgba(15, 15, 20, ${settings.opacity})`;
+              notifySettingsChanged();
+            }}
+          />
         </div>
       </div>
     </div>
@@ -135,7 +186,7 @@
     <!-- Section Synchronisation & Offset -->
     <div class="card">
       <h3>Synchronisation temporelle</h3>
-      <p class="description">Ajustez le décalage si les paroles sont légèrement en avance ou en retard.</p>
+      <p class="description">Ajustez le décalage si les paroles sont légèrement en avance ou en retard. Vos changements sont immédiatement appliqués sur l'overlay.</p>
 
       <div class="offset-controls">
         <div class="offset-display">
@@ -182,10 +233,16 @@
 
 <style>
   .settings-page {
+    height: 100vh;
+    max-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    user-select: text;
+    -webkit-user-select: text;
     padding: 24px;
     background: #0f172a;
     color: #f8fafc;
-    min-height: 100vh;
+    box-sizing: border-box;
     font-family: system-ui, -apple-system, sans-serif;
   }
 

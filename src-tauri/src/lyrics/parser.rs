@@ -62,7 +62,8 @@ fn parse_lrc_timestamp(tag: &str) -> Option<i64> {
     }
 
     let minutes: i64 = parts[0].parse().ok()?;
-    let sec_parts: Vec<&str> = parts[1].split('.').collect();
+    let normalized_sec = parts[1].replace(',', ".");
+    let sec_parts: Vec<&str> = normalized_sec.split('.').collect();
     let seconds: i64 = sec_parts[0].parse().ok()?;
 
     let mut millis: i64 = 0;

@@ -20,9 +20,9 @@
   });
 
   let lyrics = $state<LyricLine[]>([
-    { startTimeMs: 0, text: "GhostLyrics — En attente du lecteur" },
-    { startTimeMs: 3000, text: "Détection automatique via Windows Media Controls" },
-    { startTimeMs: 6000, text: "Prêt à afficher vos morceaux en temps réel" },
+    { startTimeMs: 0, text: "GhostLyrics — Prêt à afficher vos paroles" },
+    { startTimeMs: 4000, text: "Lancez Spotify ou YouTube pour démarrer la synchronisation" },
+    { startTimeMs: 8000, text: "Ou testez la démo instantanée dans les Paramètres (⚙️)" },
   ]);
 
   let settings = $state<AppSettings>({
@@ -41,51 +41,70 @@
   let isFetchingLyrics = $state<boolean>(false);
   let currentLineIndex = $state<number>(0);
   let interpolatedPositionMs = $state<number>(0);
+  let currentScrollY = $state<number>(0);
 
+  let lineElements: (HTMLDivElement | null)[] = $state([]);
   let animationFrameId: number;
   let pollIntervalId: number;
   let lastFetchedKey = "";
   let unlistenDemo: (() => void) | null = null;
   let unlistenManual: (() => void) | null = null;
+  let unlistenSettings: (() => void) | null = null;
 
   async function pollMedia() {
-    if (isDemoMode) return;
-
     try {
       const media = await invoke<CurrentMediaState | null>("get_media_state");
       if (media && media.title) {
         hasDetectedPlayer = true;
-        playback.isPlaying = media.isPlaying;
-        playback.positionMs = media.positionMs;
-        playback.lastUpdatedMs = media.lastUpdatedMs;
-        playback.playbackRate = media.playbackRate || 1.0;
 
-        const songKey = `${media.title}-${media.artist}`;
-        if (songKey !== lastFetchedKey) {
-          lastFetchedKey = songKey;
-          currentSong = {
-            title: media.title,
-            artist: media.artist,
-            album: media.album,
-            durationMs: media.durationMs,
-            sourceApp: media.sourceApp,
-          };
+        // Si l'utilisateur lance une vraie musique, quitter le mode démo
+        if (isDemoMode && media.isPlaying) {
+          isDemoMode = false;
+        }
 
-          await loadLyricsForSong(media.title, media.artist, media.album, media.durationMs);
-        } else {
-          currentSong.sourceApp = media.sourceApp;
+        if (!isDemoMode) {
+          playback.isPlaying = media.isPlaying;
+          playback.playbackRate = media.playbackRate > 0 ? media.playbackRate : 1.0;
+          playback.lastUpdatedMs = media.lastUpdatedMs;
+
+          // Si le décalage avec l'interpolation dépasse 400ms (ex: seek ou reprise), recalage immédiat
+          const diff = Math.abs(interpolatedPositionMs - (media.positionMs + settings.timeOffsetMs));
+          if (!playback.isPlaying || diff > 400) {
+            playback.positionMs = media.positionMs;
+          }
+
+          const songKey = `${media.title}-${media.artist}`;
+          if (songKey !== lastFetchedKey) {
+            lastFetchedKey = songKey;
+            currentSong = {
+              title: media.title,
+              artist: media.artist,
+              album: media.album,
+              durationMs: media.durationMs,
+              sourceApp: media.sourceApp,
+            };
+
+            await loadLyricsForSong(media.title, media.artist, media.album, media.durationMs);
+          } else {
+            currentSong.sourceApp = media.sourceApp;
+          }
         }
       } else {
-        hasDetectedPlayer = false;
+        if (!isDemoMode) {
+          hasDetectedPlayer = false;
+        }
       }
     } catch (e) {
-      // Ignorer si en dehors de Tauri (test web)
+      // Ignorer si en dehors de Tauri
     }
   }
 
   async function loadLyricsForSong(title: string, artist: string, album?: string, durationMs?: number) {
     isFetchingLyrics = true;
     lyrics = [{ startTimeMs: 0, text: `Recherche des paroles pour "${title}"...` }];
+    lineElements = [];
+    currentLineIndex = 0;
+    currentScrollY = 0;
 
     try {
       const data = await invoke<any>("fetch_song_lyrics", {
@@ -102,7 +121,7 @@
       } else {
         lyrics = [
           { startTimeMs: 0, text: `Aucune parole synchronisée pour "${title}"` },
-          { startTimeMs: 4000, text: "Vérifiez le titre ou importez un fichier .lrc dans les Paramètres" },
+          { startTimeMs: 4000, text: "Vérifiez le titre ou lancez un autre morceau" },
         ];
       }
     } catch (err) {
@@ -145,29 +164,64 @@
       interpolatedPositionMs = playback.positionMs + settings.timeOffsetMs;
     }
 
-    // Trouve la ligne de parole active
-    let foundIndex = 0;
-    for (let i = 0; i < lyrics.length; i++) {
-      if (lyrics[i].startTimeMs <= interpolatedPositionMs) {
-        foundIndex = i;
-      } else {
-        break;
+    if (lyrics.length === 0) {
+      currentLineIndex = -1;
+    } else if (interpolatedPositionMs < lyrics[0].startTimeMs) {
+      // Intro musicale avant la première phrase de paroles
+      currentLineIndex = -1;
+    } else {
+      let foundIndex = 0;
+      for (let i = 0; i < lyrics.length; i++) {
+        if (lyrics[i].startTimeMs <= interpolatedPositionMs) {
+          foundIndex = i;
+        } else {
+          break;
+        }
+      }
+      currentLineIndex = foundIndex;
+    }
+
+    // Centrage automatique exact sur la ligne active via offsetTop
+    if (currentLineIndex >= 0 && lineElements[currentLineIndex]) {
+      const el = lineElements[currentLineIndex];
+      if (el) {
+        currentScrollY = el.offsetTop + el.offsetHeight / 2;
+      }
+    } else if (currentLineIndex === -1 && lineElements[0]) {
+      const el = lineElements[0];
+      if (el) {
+        currentScrollY = el.offsetTop;
       }
     }
-    currentLineIndex = foundIndex;
 
     animationFrameId = requestAnimationFrame(updateInterpolation);
   }
 
   onMount(async () => {
+    // 1. Charge les paramètres persistés
+    const saved = localStorage.getItem("ghost_lyrics_settings");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        Object.assign(settings, parsed);
+      } catch (e) {}
+    }
+
+    // 2. Démarrage de la boucle d'interpolation et du polling à 350ms
     animationFrameId = requestAnimationFrame(updateInterpolation);
-    pollIntervalId = window.setInterval(pollMedia, 1000);
+    pollIntervalId = window.setInterval(pollMedia, 350);
     pollMedia();
 
+    // 3. Écouteurs d'événements Tauri
     try {
+      unlistenSettings = await listen<AppSettings>("settings_changed", (event) => {
+        Object.assign(settings, event.payload);
+      });
+
       unlistenDemo = await listen<{ title: string; artist: string; durationMs: number }>("play_demo_song", async (event) => {
         isDemoMode = true;
         hasDetectedPlayer = true;
+        lastFetchedKey = "";
         currentSong = {
           title: event.payload.title,
           artist: event.payload.artist,
@@ -186,6 +240,7 @@
       unlistenManual = await listen<{ title: string; artist: string }>("play_manual_song", async (event) => {
         isDemoMode = true;
         hasDetectedPlayer = true;
+        lastFetchedKey = "";
         currentSong = {
           title: event.payload.title,
           artist: event.payload.artist,
@@ -210,6 +265,7 @@
     if (pollIntervalId) clearInterval(pollIntervalId);
     if (unlistenDemo) unlistenDemo();
     if (unlistenManual) unlistenManual();
+    if (unlistenSettings) unlistenSettings();
   });
 </script>
 
@@ -285,18 +341,19 @@
     </div>
   </header>
 
-  <!-- Lyrics Display Area -->
+  <!-- Lyrics Display Area : Centrage vertical exact sur la ligne active -->
   <main class="lyrics-viewport">
     <div
       class="lyrics-list"
-      style="transform: translateY(-{currentLineIndex * (settings.fontSize * 1.8)}px);"
+      style="transform: translateY(-{currentScrollY}px);"
     >
       {#each lyrics as line, index}
         <div
+          bind:this={lineElements[index]}
           class="lyric-line {index === currentLineIndex ? 'active' : ''}"
           style="
             color: {index === currentLineIndex ? settings.activeColor : settings.textColor};
-            font-size: {index === currentLineIndex ? settings.fontSize * 1.15 : settings.fontSize}px;
+            font-size: {index === currentLineIndex ? settings.fontSize * 1.16 : settings.fontSize}px;
           "
         >
           {line.text}
@@ -332,6 +389,7 @@
     padding-bottom: 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     min-height: 32px;
+    z-index: 10;
   }
 
   .drag-zone {
@@ -483,18 +541,20 @@
     position: relative;
     flex: 1;
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    mask-image: linear-gradient(to bottom, transparent 0%, black 22%, black 78%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 22%, black 78%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
   }
 
   .lyrics-list {
-    transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
+    transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+    will-change: transform;
   }
 
   .lyric-line {
@@ -508,7 +568,7 @@
 
   .lyric-line.active {
     font-weight: 700;
-    transform: scale(1.05);
+    transform: scale(1.06);
     text-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
   }
 </style>
