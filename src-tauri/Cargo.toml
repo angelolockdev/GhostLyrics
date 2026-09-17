@@ -1,6 +1,6 @@
 [package]
 name = "ghost-lyrics"
-version = "0.1.6"
+version = "0.1.7"
 description = "Open-source floating synced lyrics overlay for Windows"
 authors = ["Angelo LOCK TO HANG"]
 edition = "2021"
@@ -24,6 +24,7 @@ regex = "1.10"
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.58"
 features = [
+    "Media",
     "Media_Control",
     "Foundation",
     "Foundation_Collections",

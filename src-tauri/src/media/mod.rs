@@ -1,3 +1,4 @@
+pub mod matcher;
 pub mod watcher;
 
 pub use watcher::CurrentMediaState;

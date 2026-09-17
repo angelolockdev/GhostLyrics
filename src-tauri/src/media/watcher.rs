@@ -17,73 +17,124 @@ pub struct CurrentMediaState {
 #[cfg(windows)]
 pub mod windows_gsmtc {
     use super::CurrentMediaState;
+    use crate::media::matcher::{
+        calculate_music_score, extract_web_music_metadata, format_app_name,
+        is_valid_music_candidate, is_web_browser, PlaybackType,
+    };
     use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSession,
         GlobalSystemMediaTransportControlsSessionManager,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     };
 
+    struct SessionCandidate {
+        session: GlobalSystemMediaTransportControlsSession,
+        raw_app_id: String,
+        raw_title: String,
+        raw_artist: String,
+        album: String,
+        score: i32,
+    }
+
     pub async fn get_current_session_state() -> Option<CurrentMediaState> {
         let manager = GlobalSystemMediaTransportControlsSessionManager::RequestAsync().ok()?.get().ok()?;
 
-        // 1. Inspecte toutes les sessions pour trouver en priorité celle qui est en cours de lecture
-        let sessions = manager.GetSessions().ok();
-        let mut playing_session = None;
-        let mut any_valid_session = None;
+        // 1. Collecte et évaluation intelligente de toutes les sessions
+        let mut candidates = Vec::new();
 
-        if let Some(ref list) = sessions {
-            let count = list.Size().unwrap_or(0);
+        let evaluate_session = |s: GlobalSystemMediaTransportControlsSession| -> Option<SessionCandidate> {
+            let raw_app_id = s.SourceAppUserModelId().unwrap_or_default().to_string();
+            let props_async = s.TryGetMediaPropertiesAsync().ok()?;
+            let p = props_async.get().ok()?;
+
+            let raw_title = p.Title().unwrap_or_default().to_string();
+            let raw_artist = p.Artist().unwrap_or_default().to_string();
+            let album = p.AlbumTitle().unwrap_or_default().to_string();
+
+            if raw_title.trim().is_empty() && raw_artist.trim().is_empty() {
+                return None;
+            }
+
+            let pb_type = match p.PlaybackType().ok().and_then(|r| r.Value().ok()) {
+                Some(windows::Media::MediaPlaybackType::Music) => PlaybackType::Music,
+                Some(windows::Media::MediaPlaybackType::Video) => PlaybackType::Video,
+                _ => PlaybackType::Unknown,
+            };
+
+            let is_playing = s.GetPlaybackInfo().ok().map(|pb| {
+                pb.PlaybackStatus().unwrap_or(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed)
+                    == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
+            }).unwrap_or(false);
+
+            // Rejet catégorique si la session n'est pas un candidat musical valable (ex: tutoriels, gaming, vlogs)
+            if !is_valid_music_candidate(&raw_app_id, &raw_title, &raw_artist, pb_type) {
+                return None;
+            }
+
+            let score = calculate_music_score(
+                &raw_app_id,
+                &raw_title,
+                &raw_artist,
+                &album,
+                is_playing,
+                pb_type,
+            );
+
+            Some(SessionCandidate {
+                session: s,
+                raw_app_id,
+                raw_title,
+                raw_artist,
+                album,
+                score,
+            })
+        };
+
+        if let Ok(sessions) = manager.GetSessions() {
+            let count = sessions.Size().unwrap_or(0);
             for i in 0..count {
-                if let Ok(s) = list.GetAt(i) {
-                    if let Ok(props) = s.TryGetMediaPropertiesAsync() {
-                        if let Ok(p) = props.get() {
-                            let title = p.Title().unwrap_or_default().to_string();
-                            if !title.is_empty() {
-                                let is_playing = s.GetPlaybackInfo().ok().map(|pb| {
-                                    pb.PlaybackStatus().unwrap_or(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed)
-                                        == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing
-                                }).unwrap_or(false);
-
-                                if is_playing && playing_session.is_none() {
-                                    playing_session = Some(s.clone());
-                                }
-                                if any_valid_session.is_none() {
-                                    any_valid_session = Some(s);
-                                }
-                            }
-                        }
+                if let Ok(s) = sessions.GetAt(i) {
+                    if let Some(candidate) = evaluate_session(s) {
+                        candidates.push(candidate);
                     }
                 }
             }
         }
 
-        // Priorité : 1. Session active en lecture, 2. GetCurrentSession(), 3. Première session avec titre
-        let session = if let Some(ps) = playing_session {
-            ps
-        } else if let Ok(cur) = manager.GetCurrentSession() {
-            cur
-        } else if let Some(avs) = any_valid_session {
-            avs
-        } else {
+        // Si GetSessions() n'a rien trouvé, tenter GetCurrentSession()
+        if candidates.is_empty() {
+            if let Ok(cur) = manager.GetCurrentSession() {
+                if let Some(candidate) = evaluate_session(cur) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+
+        // Aucun candidat musical valide en cours (ex: uniquement une vidéo de dev/tuto sur YouTube)
+        if candidates.is_empty() {
             return None;
+        }
+
+        // Trier par score décroissant : le meilleur candidat musical l'emporte toujours
+        candidates.sort_by(|a, b| b.score.cmp(&a.score));
+        let best = candidates.remove(0);
+
+        let source_app = format_app_name(&best.raw_app_id, &best.raw_title);
+        let (title, artist) = if is_web_browser(&best.raw_app_id) {
+            extract_web_music_metadata(&best.raw_title, &best.raw_artist)
+        } else {
+            (best.raw_title.trim().to_string(), best.raw_artist.trim().to_string())
         };
-
-        let raw_app_id = session.SourceAppUserModelId().unwrap_or_default().to_string();
-        let source_app = format_app_name(&raw_app_id);
-
-        let media_props = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
-        let title = media_props.Title().unwrap_or_default().to_string();
-        let artist = media_props.Artist().unwrap_or_default().to_string();
-        let album = media_props.AlbumTitle().unwrap_or_default().to_string();
 
         if title.is_empty() && artist.is_empty() {
             return None;
         }
 
-        let timeline = session.GetTimelineProperties().ok()?;
+        let timeline = best.session.GetTimelineProperties().ok()?;
         let duration_ms = timeline.EndTime().unwrap_or_default().Duration / 10_000;
         let raw_position_ms = timeline.Position().unwrap_or_default().Duration / 10_000;
 
-        let playback_info = session.GetPlaybackInfo().ok()?;
+        let playback_info = best.session.GetPlaybackInfo().ok()?;
         let is_playing = playback_info.PlaybackStatus().unwrap_or(
             GlobalSystemMediaTransportControlsSessionPlaybackStatus::Closed,
         ) == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
@@ -119,7 +170,7 @@ pub mod windows_gsmtc {
         Some(CurrentMediaState {
             title,
             artist,
-            album,
+            album: best.album,
             duration_ms,
             position_ms,
             is_playing,
@@ -129,28 +180,6 @@ pub mod windows_gsmtc {
         })
     }
 
-    fn format_app_name(raw_id: &str) -> String {
-        let lower = raw_id.to_lowercase();
-        if lower.contains("spotify") {
-            "Spotify".to_string()
-        } else if lower.contains("chrome") {
-            "Google Chrome".to_string()
-        } else if lower.contains("msedge") || lower.contains("edge") {
-            "Microsoft Edge".to_string()
-        } else if lower.contains("applemusic") || lower.contains("apple") {
-            "Apple Music".to_string()
-        } else if lower.contains("vlc") {
-            "VLC".to_string()
-        } else if lower.contains("firefox") {
-            "Firefox".to_string()
-        } else if lower.contains("brave") {
-            "Brave".to_string()
-        } else if raw_id.is_empty() {
-            "Lecteur Windows".to_string()
-        } else {
-            raw_id.split('.').next().unwrap_or(raw_id).to_string()
-        }
-    }
 
     fn chrono_or_instant_now() -> i64 {
         std::time::SystemTime::now()
