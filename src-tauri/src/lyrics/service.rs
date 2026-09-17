@@ -68,7 +68,7 @@ impl LyricsService {
 
         Self {
             client: reqwest::Client::builder()
-                .user_agent("GhostLyrics/0.1.5 (https://github.com/angelolockdev/GhostLyrics)")
+                .user_agent("GhostLyrics/0.1.6 (https://github.com/angelolockdev/GhostLyrics)")
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),

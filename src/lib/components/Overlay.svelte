@@ -37,6 +37,15 @@
     clickThrough: false,
   });
 
+  let isHeaderHidden = $state<boolean>(false);
+
+  function toggleHeaderVisibility() {
+    isHeaderHidden = !isHeaderHidden;
+    try {
+      localStorage.setItem("ghost_lyrics_header_hidden", JSON.stringify(isHeaderHidden));
+    } catch (e) {}
+  }
+
   const modeLabel = $derived(
     settings.displayMode === "standard"
       ? "🎴 Standard"
@@ -49,13 +58,21 @@
     const modes: ("standard" | "glass" | "ghost")[] = ["standard", "glass", "ghost"];
     const nextIdx = (modes.indexOf(settings.displayMode) + 1) % modes.length;
     settings.displayMode = modes[nextIdx];
-    if (settings.displayMode === "standard") settings.opacity = 0.88;
-    else if (settings.displayMode === "glass") settings.opacity = 0.28;
-    else if (settings.displayMode === "ghost") settings.opacity = 0.0;
+    if (settings.displayMode === "standard") {
+      settings.opacity = 0.88;
+      isHeaderHidden = false;
+    } else if (settings.displayMode === "glass") {
+      settings.opacity = 0.28;
+      isHeaderHidden = false;
+    } else if (settings.displayMode === "ghost") {
+      settings.opacity = 0.0;
+      isHeaderHidden = true;
+    }
 
     try {
       const snap = $state.snapshot(settings);
       localStorage.setItem("ghost_lyrics_settings", JSON.stringify(snap));
+      localStorage.setItem("ghost_lyrics_header_hidden", JSON.stringify(isHeaderHidden));
       await emit("settings_changed", snap);
     } catch (e) {}
   }
@@ -68,6 +85,7 @@
   let availableUpdate = $state<string | null>(null);
   let currentLineIndex = $state<number>(0);
   let interpolatedPositionMs = $state<number>(0);
+  let lastInterpolatedPositionMs = 0;
   let currentScrollY = $state<number>(0);
 
   let lineElements: (HTMLDivElement | null)[] = $state([]);
@@ -92,13 +110,26 @@
         if (!isDemoMode) {
           playback.isPlaying = media.isPlaying;
           playback.playbackRate = media.playbackRate > 0 ? media.playbackRate : 1.0;
-          playback.lastUpdatedMs = media.lastUpdatedMs;
 
-          // Si le décalage avec l'interpolation dépasse 400ms (ex: seek ou reprise), recalage immédiat
-          const diff = Math.abs(interpolatedPositionMs - (media.positionMs + settings.timeOffsetMs));
-          if (!playback.isPlaying || diff > 400) {
+          const now = Date.now();
+          const currentEstimated = playback.isPlaying
+            ? playback.positionMs + ((now - playback.lastUpdatedMs) * playback.playbackRate)
+            : playback.positionMs;
+
+          const drift = media.positionMs - currentEstimated;
+
+          if (!playback.isPlaying || Math.abs(drift) > 500) {
+            // Recalage immédiat si pause ou seek franc (> 500ms)
             playback.positionMs = media.positionMs;
+            playback.lastUpdatedMs = now;
+            lastInterpolatedPositionMs = media.positionMs + settings.timeOffsetMs;
+          } else if (Math.abs(drift) > 30) {
+            // Dérive modérée : lissage progressif sans jamais faire reculer le temps
+            const adjusted = currentEstimated + (drift * 0.25);
+            playback.positionMs = playback.isPlaying ? Math.max(adjusted, currentEstimated) : adjusted;
+            playback.lastUpdatedMs = now;
           }
+          // Si |drift| <= 30ms : l'horloge locale est en phase parfaite, aucun à-coup d'horloge
 
           const songKey = `${media.title}-${media.artist}`;
           if (songKey !== lastFetchedKey) {
@@ -133,6 +164,7 @@
     lineElements = [];
     currentLineIndex = 0;
     currentScrollY = 0;
+    lastInterpolatedPositionMs = 0;
 
     try {
       const data = await invoke<any>("fetch_song_lyrics", {
@@ -191,12 +223,21 @@
   }
 
   function updateInterpolation() {
+    let currentPos = 0;
     if (playback.isPlaying) {
       const elapsed = Date.now() - playback.lastUpdatedMs;
-      interpolatedPositionMs = playback.positionMs + (elapsed * playback.playbackRate) + settings.timeOffsetMs;
+      currentPos = playback.positionMs + (elapsed * playback.playbackRate) + settings.timeOffsetMs;
+      // En lecture continue, l'horloge des paroles ne doit jamais régresser
+      if (currentPos >= lastInterpolatedPositionMs) {
+        lastInterpolatedPositionMs = currentPos;
+      } else {
+        currentPos = lastInterpolatedPositionMs;
+      }
     } else {
-      interpolatedPositionMs = playback.positionMs + settings.timeOffsetMs;
+      currentPos = playback.positionMs + settings.timeOffsetMs;
+      lastInterpolatedPositionMs = currentPos;
     }
+    interpolatedPositionMs = currentPos;
 
     if (lyrics.length === 0) {
       currentLineIndex = -1;
@@ -204,15 +245,27 @@
       // Intro musicale avant la première phrase de paroles
       currentLineIndex = -1;
     } else {
-      let foundIndex = 0;
+      let targetIndex = 0;
       for (let i = 0; i < lyrics.length; i++) {
         if (lyrics[i].startTimeMs <= interpolatedPositionMs) {
-          foundIndex = i;
+          targetIndex = i;
         } else {
           break;
         }
       }
-      currentLineIndex = foundIndex;
+
+      // Hystérésis anti-rebond :
+      // 1. Pour avancer à la ligne suivante ou rester sur la même ligne : transition immédiate.
+      // 2. Pour revenir à la ligne précédente : requiert un saut en arrière franc (> 250ms avant le début de la ligne).
+      // Cela élimine tout effet de « va-et-vient » lors du passage d'un couplet à l'autre.
+      if (currentLineIndex === -1 || targetIndex >= currentLineIndex) {
+        currentLineIndex = targetIndex;
+      } else {
+        const currentLineStart = lyrics[currentLineIndex]?.startTimeMs ?? 0;
+        if (interpolatedPositionMs < currentLineStart - 250) {
+          currentLineIndex = targetIndex;
+        }
+      }
     }
 
     // Centrage automatique exact sur la ligne active via offsetTop
@@ -241,6 +294,15 @@
       } catch (e) {}
     }
 
+    const savedHidden = localStorage.getItem("ghost_lyrics_header_hidden");
+    if (savedHidden !== null) {
+      try {
+        isHeaderHidden = JSON.parse(savedHidden);
+      } catch (e) {}
+    } else if (settings.displayMode === "ghost") {
+      isHeaderHidden = true;
+    }
+
     // 2. Démarrage de la boucle d'interpolation et du polling à 350ms
     animationFrameId = requestAnimationFrame(updateInterpolation);
     pollIntervalId = window.setInterval(pollMedia, 350);
@@ -249,7 +311,13 @@
     // 3. Écouteurs d'événements Tauri
     try {
       unlistenSettings = await listen<AppSettings>("settings_changed", (event) => {
+        const prevMode = settings.displayMode;
         Object.assign(settings, event.payload);
+        if (event.payload.displayMode === "ghost" && prevMode !== "ghost") {
+          isHeaderHidden = true;
+        } else if (event.payload.displayMode !== "ghost" && prevMode === "ghost") {
+          isHeaderHidden = false;
+        }
       });
 
       unlistenDemo = await listen<{ title: string; artist: string; durationMs: number }>("play_demo_song", async (event) => {
@@ -268,6 +336,7 @@
           lastUpdatedMs: Date.now(),
           playbackRate: 1.0,
         };
+        lastInterpolatedPositionMs = 0;
         await loadLyricsForSong(event.payload.title, event.payload.artist, undefined, event.payload.durationMs);
       });
 
@@ -287,6 +356,7 @@
           lastUpdatedMs: Date.now(),
           playbackRate: 1.0,
         };
+        lastInterpolatedPositionMs = 0;
         await loadLyricsForSong(event.payload.title, event.payload.artist);
       });
     } catch (e) {
@@ -315,108 +385,148 @@
 </script>
 
 <div
-  class="overlay-container mode-{settings.displayMode}"
+  class="overlay-container mode-{settings.displayMode} {isHeaderHidden ? 'header-hidden' : ''}"
   style="
     --bg-opacity: {settings.opacity};
     font-size: {settings.fontSize}px;
   "
+  data-tauri-drag-region
 >
-  <!-- Header Bar -->
-  <header class="overlay-header">
-    <!-- Zone Déplaçable (Drag region) -->
-    <div class="drag-zone" data-tauri-drag-region>
-      <span class="music-icon">🎵</span>
-      <div class="song-meta">
-        <span class="track-title">{currentSong.title}</span>
-        <span class="track-artist">— {currentSong.artist}</span>
+  {#if !isHeaderHidden}
+    <!-- Header Bar compact & épuré -->
+    <header class="overlay-header">
+      <!-- Zone Déplaçable (Drag region) -->
+      <div class="drag-zone" data-tauri-drag-region>
+        <span class="music-icon" data-tauri-drag-region>🎵</span>
+        <div class="song-meta" data-tauri-drag-region>
+          <span class="track-title" title="{currentSong.title}">{currentSong.title}</span>
+          {#if currentSong.artist}
+            <span class="track-artist" title="{currentSong.artist}">— {currentSong.artist}</span>
+          {/if}
+        </div>
       </div>
-    </div>
 
-    <!-- Badges d'état et contrôles de la fenêtre -->
-    <div class="header-actions">
-      <!-- Sélecteur de mode d'affichage rapide -->
-      <button
-        class="mode-pill-btn"
-        onclick={cycleDisplayMode}
-        title="Style d'affichage : Standard / Verre / Fantôme (clic pour basculer)"
-        aria-label="Changer de mode"
-      >
-        <span class="mode-text">{modeLabel}</span>
-      </button>
+      <!-- Badges d'état et contrôles de la fenêtre -->
+      <div class="header-actions">
+        <!-- Sélecteur de mode d'affichage rapide -->
+        <button
+          class="mode-pill-btn"
+          onclick={cycleDisplayMode}
+          title="Style d'affichage : Standard / Verre / Fantôme (clic pour basculer)"
+          aria-label="Changer de mode"
+        >
+          <span class="mode-text">{modeLabel}</span>
+        </button>
 
-      <!-- Indicateur d'état du lecteur -->
-      <div class="player-status-pill" title="Statut de la détection Windows Media Controls">
-        {#if isDemoMode}
-          <span class="status-dot dot-demo"></span>
-          <span class="status-text">Mode Démo</span>
-        {:else if !hasDetectedPlayer}
-          <span class="status-dot dot-waiting"></span>
-          <span class="status-text">En attente d'un lecteur</span>
-        {:else if playback.isPlaying}
-          <span class="status-dot dot-playing"></span>
-          <span class="status-text">{currentSong.sourceApp || "Lecteur"} • En lecture</span>
-        {:else}
-          <span class="status-dot dot-paused"></span>
-          <span class="status-text">{currentSong.sourceApp || "Lecteur"} • En pause</span>
+        <!-- Indicateur d'état du lecteur ultra-compact -->
+        <div
+          class="player-status-pill"
+          title={isDemoMode
+            ? "Mode Démo actif"
+            : !hasDetectedPlayer
+              ? "En attente d'un lecteur (Spotify, Deezer, YouTube...)"
+              : `${currentSong.sourceApp || 'Lecteur'} • ${playback.isPlaying ? 'En lecture' : 'En pause'}`}
+        >
+          {#if isDemoMode}
+            <span class="status-dot dot-demo"></span>
+            <span class="status-text">Démo</span>
+          {:else if !hasDetectedPlayer}
+            <span class="status-dot dot-waiting"></span>
+            <span class="status-text">Attente</span>
+          {:else if playback.isPlaying}
+            <span class="status-dot dot-playing"></span>
+            <span class="status-text">{currentSong.sourceApp || "Actif"}</span>
+          {:else}
+            <span class="status-dot dot-paused"></span>
+            <span class="status-text">Pause</span>
+          {/if}
+        </div>
+
+        {#if isFetchingLyrics}
+          <span class="badge badge-loading" title="Recherche des paroles en cours...">⏳</span>
+        {:else if currentLyricsSource}
+          <span
+            class="badge {isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
+            title={isCurrentSynced ? `Synchronisé (.lrc) via ${currentLyricsSource}` : `Défilement temporel estimé via ${currentLyricsSource}`}
+          >
+            {isCurrentSynced ? '🟢 LRC' : '🟡 Texte'}
+          </span>
         {/if}
+
+        {#if availableUpdate}
+          <button
+            class="badge badge-update-alert"
+            onclick={handleOpenSettings}
+            title="Nouvelle version v{availableUpdate} disponible ! Cliquez pour mettre à jour."
+          >
+            ✨ v{availableUpdate}
+          </button>
+        {/if}
+
+        <!-- Boutons de contrôle -->
+        <div class="window-controls">
+          <!-- Bouton pour masquer la barre de menu (Mode Paroles Seules) -->
+          <button
+            class="ctrl-btn btn-toggle-header"
+            onclick={toggleHeaderVisibility}
+            title="Masquer les menus (Mode épuré / Paroles seules)"
+            aria-label="Masquer les menus"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+              <line x1="1" y1="1" x2="23" y2="23"></line>
+            </svg>
+          </button>
+          <button
+            class="ctrl-btn btn-settings"
+            onclick={handleOpenSettings}
+            title="Ouvrir les paramètres (⚙️)"
+            aria-label="Paramètres"
+          >
+            ⚙️
+          </button>
+          <button
+            class="ctrl-btn btn-minimize"
+            onclick={handleMinimize}
+            title="Réduire dans la zone de notification Windows (icônes cachées)"
+            aria-label="Réduire"
+          >
+            —
+          </button>
+          <button
+            class="ctrl-btn btn-close"
+            onclick={handleCloseApp}
+            title="Quitter GhostLyrics"
+            aria-label="Quitter"
+          >
+            ✕
+          </button>
+        </div>
       </div>
-
-      {#if isFetchingLyrics}
-        <span class="badge badge-loading">⏳ Recherche...</span>
-      {:else if currentLyricsSource}
-        <span
-          class="badge {isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
-          title={isCurrentSynced ? "Paroles synchronisées à la milliseconde (.lrc)" : "Paroles textuelles défilantes avec rythme temporel estimé"}
-        >
-          {isCurrentSynced ? '🟢 ' : '🟡 '}{currentLyricsSource}
-        </span>
-      {/if}
-
-      {#if availableUpdate}
-        <button
-          class="badge badge-update-alert"
-          onclick={handleOpenSettings}
-          title="Nouvelle version v{availableUpdate} disponible ! Cliquez pour ouvrir les paramètres et mettre à jour."
-        >
-          ✨ v{availableUpdate} dispo
-        </button>
-      {/if}
-
-      <!-- Boutons de contrôle -->
-      <div class="window-controls">
-        <button
-          class="ctrl-btn btn-settings"
-          onclick={handleOpenSettings}
-          title="Ouvrir les paramètres (⚙️)"
-          aria-label="Paramètres"
-        >
-          ⚙️
-        </button>
-        <button
-          class="ctrl-btn btn-minimize"
-          onclick={handleMinimize}
-          title="Réduire dans la zone de notification Windows (icônes cachées)"
-          aria-label="Réduire"
-        >
-          —
-        </button>
-        <button
-          class="ctrl-btn btn-close"
-          onclick={handleCloseApp}
-          title="Quitter GhostLyrics"
-          aria-label="Quitter"
-        >
-          ✕
-        </button>
-      </div>
+    </header>
+  {:else}
+    <!-- Mini Dock Flottant : Visible quand les menus sont masqués (Paroles seules) -->
+    <div class="mini-floating-dock" data-tauri-drag-region>
+      <button
+        class="mini-dock-btn"
+        onclick={toggleHeaderVisibility}
+        title="Afficher les menus et contrôles"
+        aria-label="Afficher les menus"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+      </button>
     </div>
-  </header>
+  {/if}
 
   <!-- Lyrics Display Area : Centrage vertical exact sur la ligne active -->
-  <main class="lyrics-viewport">
+  <main class="lyrics-viewport" data-tauri-drag-region>
     <div
       class="lyrics-list"
       style="transform: translateY(-{currentScrollY}px);"
+      data-tauri-drag-region
     >
       {#each lyrics as line, index}
         <div
@@ -436,17 +546,64 @@
 
 <style>
   .overlay-container {
+    position: relative;
     display: flex;
     flex-direction: column;
     width: 100vw;
     height: 100vh;
     box-sizing: border-box;
-    padding: 10px 16px;
+    padding: 6px 14px 10px 14px;
     border-radius: 12px;
     overflow: hidden;
     user-select: none;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     transition: background 0.25s ease, border 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  .overlay-container.header-hidden {
+    padding-top: 4px;
+  }
+
+  /* Mini Dock Flottant : Apparaît quand les menus sont masqués */
+  .mini-floating-dock {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.2;
+    transition: opacity 0.2s ease, transform 0.15s ease;
+  }
+
+  .mini-floating-dock:hover {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+
+  .mini-dock-btn {
+    background: rgba(15, 15, 20, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #e2e8f0;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.15s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+
+  .mini-dock-btn:hover {
+    background: rgba(56, 189, 248, 0.3);
+    border-color: rgba(56, 189, 248, 0.6);
+    color: #38bdf8;
   }
 
   /* Mode 1: Standard (Verre dépoli complet) */
@@ -476,9 +633,9 @@
     box-shadow: none !important;
   }
 
-  /* En mode Fantôme, l'en-tête est très discret au repos pour un rendu épuré */
+  /* En mode Fantôme, l'en-tête est très discret quand affiché */
   .mode-ghost .overlay-header {
-    opacity: 0.15;
+    opacity: 0.4;
     transition: opacity 0.2s ease;
     border-bottom: 1px solid transparent;
   }
@@ -492,17 +649,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding-bottom: 8px;
+    gap: 8px;
+    padding-bottom: 5px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    min-height: 32px;
+    min-height: 26px;
     z-index: 10;
   }
 
   .drag-zone {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex: 1;
     min-width: 0;
     cursor: grab;
@@ -515,55 +672,63 @@
   }
 
   .music-icon {
-    font-size: 0.9em;
-    opacity: 0.9;
+    font-size: 0.8em;
+    opacity: 0.8;
+    flex-shrink: 0;
   }
 
   .song-meta {
     display: flex;
     align-items: baseline;
-    gap: 6px;
+    gap: 4px;
     overflow: hidden;
+    white-space: nowrap;
     text-overflow: ellipsis;
+    min-width: 0;
   }
 
   .track-title {
     font-weight: 600;
     color: #f8fafc;
-    font-size: 0.85em;
+    font-size: 0.76em;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    max-width: 140px;
   }
 
   .track-artist {
-    color: #cbd5e1;
-    font-size: 0.8em;
+    color: #94a3b8;
+    font-size: 0.72em;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    max-width: 100px;
   }
 
   .header-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 5px;
     flex-shrink: 0;
   }
 
   .mode-pill-btn {
-    background: rgba(0, 0, 0, 0.45);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     color: #f1f5f9;
-    font-size: 0.72em;
+    font-size: 0.68em;
     font-weight: 600;
-    padding: 3px 9px;
+    padding: 2px 7px;
     border-radius: 9999px;
     cursor: pointer;
     transition: all 0.15s ease;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
+    white-space: nowrap;
   }
 
   .mode-pill-btn:hover {
@@ -575,42 +740,47 @@
   .player-status-pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    background: rgba(0, 0, 0, 0.45);
-    padding: 3px 10px;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.35);
+    padding: 2px 7px;
     border-radius: 9999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 0.72em;
+    font-size: 0.68em;
     font-weight: 500;
     color: #e2e8f0;
+    white-space: nowrap;
+    max-width: 90px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .status-dot {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     display: inline-block;
+    flex-shrink: 0;
   }
 
   .dot-waiting {
     background-color: #ef4444;
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
   }
 
   .dot-playing {
     background-color: #22c55e;
-    box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
     animation: pulse 2s infinite;
   }
 
   .dot-paused {
     background-color: #eab308;
-    box-shadow: 0 0 8px rgba(234, 179, 8, 0.6);
+    box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
   }
 
   .dot-demo {
     background-color: #a855f7;
-    box-shadow: 0 0 8px rgba(168, 85, 247, 0.7);
+    box-shadow: 0 0 6px rgba(168, 85, 247, 0.7);
   }
 
   @keyframes pulse {
@@ -619,10 +789,11 @@
   }
 
   .badge {
-    font-size: 0.7em;
-    padding: 3px 8px;
+    font-size: 0.66em;
+    padding: 2px 6px;
     border-radius: 9999px;
     font-weight: 500;
+    white-space: nowrap;
   }
 
   .badge-loading {
@@ -661,10 +832,10 @@
   .window-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     background: rgba(0, 0, 0, 0.4);
-    padding: 2px 4px;
-    border-radius: 8px;
+    padding: 1px 3px;
+    border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
@@ -673,13 +844,13 @@
     border: none;
     color: #cbd5e1;
     cursor: pointer;
-    font-size: 0.85em;
-    width: 26px;
-    height: 24px;
+    font-size: 0.78em;
+    width: 22px;
+    height: 20px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 5px;
+    border-radius: 4px;
     transition: all 0.15s ease;
     padding: 0;
   }
@@ -687,6 +858,11 @@
   .ctrl-btn:hover {
     background: rgba(255, 255, 255, 0.15);
     color: #ffffff;
+  }
+
+  .btn-toggle-header:hover {
+    background: rgba(56, 189, 248, 0.25);
+    color: #38bdf8;
   }
 
   .btn-close:hover {
