@@ -87,6 +87,24 @@
   let interpolatedPositionMs = $state<number>(0);
   let lastInterpolatedPositionMs = 0;
   let currentScrollY = $state<number>(0);
+  let isManualScrolling = $state<boolean>(false);
+  let autoResyncTimeout: number | null = null;
+
+  const activeScrollY = $derived.by(() => {
+    if (currentLineIndex >= 0 && lineElements[currentLineIndex]) {
+      const el = lineElements[currentLineIndex];
+      return el ? el.offsetTop + el.offsetHeight / 2 : 0;
+    }
+    return 0;
+  });
+
+  const scrollDirection = $derived.by(() => {
+    if (!isManualScrolling) return "synced";
+    const diff = activeScrollY - currentScrollY;
+    if (diff > 45) return "down";
+    if (diff < -45) return "up";
+    return "here";
+  });
 
   let lineElements: (HTMLDivElement | null)[] = $state([]);
   let animationFrameId: number;
@@ -165,6 +183,11 @@
     currentLineIndex = 0;
     currentScrollY = 0;
     lastInterpolatedPositionMs = 0;
+    isManualScrolling = false;
+    if (autoResyncTimeout) {
+      clearTimeout(autoResyncTimeout);
+      autoResyncTimeout = null;
+    }
 
     try {
       const data = await invoke<any>("fetch_song_lyrics", {
@@ -268,20 +291,90 @@
       }
     }
 
-    // Centrage automatique exact sur la ligne active via offsetTop
+    // Centrage automatique exact sur la ligne active via offsetTop (uniquement si défilement automatique actif)
+    if (!isManualScrolling) {
+      if (currentLineIndex >= 0 && lineElements[currentLineIndex]) {
+        const el = lineElements[currentLineIndex];
+        if (el) {
+          currentScrollY = el.offsetTop + el.offsetHeight / 2;
+        }
+      } else if (currentLineIndex === -1 && lineElements[0]) {
+        const el = lineElements[0];
+        if (el) {
+          currentScrollY = el.offsetTop;
+        }
+      }
+    }
+
+    animationFrameId = requestAnimationFrame(updateInterpolation);
+  }
+
+  function handleWheel(e: WheelEvent) {
+    if (lyrics.length <= 1) return;
+
+    // Empêche tout scroll de page natif indésirable
+    e.preventDefault();
+
+    isManualScrolling = true;
+
+    if (autoResyncTimeout) {
+      clearTimeout(autoResyncTimeout);
+      autoResyncTimeout = null;
+    }
+
+    const firstEl = lineElements[0];
+    const lastEl = lineElements[lyrics.length - 1];
+    const minScroll = firstEl ? firstEl.offsetTop + firstEl.offsetHeight / 2 : 0;
+    const maxScroll = lastEl ? lastEl.offsetTop + lastEl.offsetHeight / 2 : minScroll;
+
+    const delta = e.deltaY;
+    const minBound = Math.max(0, minScroll - 40);
+    const maxBound = maxScroll + 40;
+
+    currentScrollY = Math.max(minBound, Math.min(maxBound, currentScrollY + delta * 0.75));
+
+    // Réarmement automatique après 10s d'inactivité
+    autoResyncTimeout = window.setTimeout(() => {
+      resyncLyrics();
+    }, 10000);
+  }
+
+  function resyncLyrics() {
+    if (autoResyncTimeout) {
+      clearTimeout(autoResyncTimeout);
+      autoResyncTimeout = null;
+    }
+    isManualScrolling = false;
+
     if (currentLineIndex >= 0 && lineElements[currentLineIndex]) {
       const el = lineElements[currentLineIndex];
       if (el) {
         currentScrollY = el.offsetTop + el.offsetHeight / 2;
       }
-    } else if (currentLineIndex === -1 && lineElements[0]) {
-      const el = lineElements[0];
-      if (el) {
-        currentScrollY = el.offsetTop;
-      }
+    } else if (lineElements[0]) {
+      currentScrollY = lineElements[0].offsetTop;
+    }
+  }
+
+  function scrollToLine(index: number) {
+    if (lyrics.length <= 1 || !lineElements[index]) return;
+
+    if (index === currentLineIndex) {
+      resyncLyrics();
+      return;
     }
 
-    animationFrameId = requestAnimationFrame(updateInterpolation);
+    isManualScrolling = true;
+    if (autoResyncTimeout) {
+      clearTimeout(autoResyncTimeout);
+    }
+    const el = lineElements[index];
+    if (el) {
+      currentScrollY = el.offsetTop + el.offsetHeight / 2;
+    }
+    autoResyncTimeout = window.setTimeout(() => {
+      resyncLyrics();
+    }, 10000);
   }
 
   onMount(async () => {
@@ -363,7 +456,28 @@
       console.warn("Écouteurs d'événements non activés:", e);
     }
 
-    // 4. Vérification silencieuse des mises à jour au démarrage
+    // 4. Navigation clavier et touche Échap pour synchroniser
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isManualScrolling) {
+        e.preventDefault();
+        resyncLyrics();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        isManualScrolling = true;
+        currentScrollY = Math.max(0, currentScrollY - 60);
+        if (autoResyncTimeout) clearTimeout(autoResyncTimeout);
+        autoResyncTimeout = window.setTimeout(resyncLyrics, 10000);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        isManualScrolling = true;
+        currentScrollY = currentScrollY + 60;
+        if (autoResyncTimeout) clearTimeout(autoResyncTimeout);
+        autoResyncTimeout = window.setTimeout(resyncLyrics, 10000);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    // 5. Vérification silencieuse des mises à jour au démarrage
     if (settings.autoCheckUpdates !== false) {
       try {
         invoke<any>("check_for_updates").then((info) => {
@@ -378,6 +492,8 @@
   onDestroy(() => {
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
     if (pollIntervalId) clearInterval(pollIntervalId);
+    if (autoResyncTimeout) clearTimeout(autoResyncTimeout);
+    window.removeEventListener("keydown", handleKeyDown);
     if (unlistenDemo) unlistenDemo();
     if (unlistenManual) unlistenManual();
     if (unlistenSettings) unlistenSettings();
@@ -463,6 +579,16 @@
           </button>
         {/if}
 
+        {#if isManualScrolling}
+          <button
+            class="badge badge-sync-btn"
+            onclick={resyncLyrics}
+            title="Défilement manuel actif. Cliquez pour revenir au couplet en direct (ou Échap)"
+          >
+            🔄 Direct
+          </button>
+        {/if}
+
         <!-- Boutons de contrôle -->
         <div class="window-controls">
           <!-- Bouton pour masquer la barre de menu (Mode Paroles Seules) -->
@@ -507,6 +633,18 @@
   {:else}
     <!-- Mini Dock Flottant : Visible quand les menus sont masqués (Paroles seules) -->
     <div class="mini-floating-dock" data-tauri-drag-region>
+      {#if isManualScrolling}
+        <button
+          class="mini-dock-btn mini-dock-sync-btn"
+          onclick={resyncLyrics}
+          title="Revenir au couplet en direct (ou Échap)"
+          aria-label="Synchroniser"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+          </svg>
+        </button>
+      {/if}
       <button
         class="mini-dock-btn"
         onclick={toggleHeaderVisibility}
@@ -522,7 +660,7 @@
   {/if}
 
   <!-- Lyrics Display Area : Centrage vertical exact sur la ligne active -->
-  <main class="lyrics-viewport" data-tauri-drag-region>
+  <main class="lyrics-viewport" data-tauri-drag-region onwheel={handleWheel}>
     <div
       class="lyrics-list"
       style="transform: translateY(-{currentScrollY}px);"
@@ -531,7 +669,16 @@
       {#each lyrics as line, index}
         <div
           bind:this={lineElements[index]}
-          class="lyric-line {index === currentLineIndex ? 'active' : ''}"
+          class="lyric-line {index === currentLineIndex ? 'active' : ''} {isManualScrolling ? 'interactive' : ''}"
+          role="button"
+          tabindex="0"
+          onclick={() => scrollToLine(index)}
+          onkeydown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              scrollToLine(index);
+            }
+          }}
           style="
             color: {index === currentLineIndex ? settings.activeColor : settings.textColor};
             font-size: {index === currentLineIndex ? settings.fontSize * 1.16 : settings.fontSize}px;
@@ -541,6 +688,30 @@
         </div>
       {/each}
     </div>
+
+    <!-- Bouton Flottant de Synchronisation -->
+    {#if isManualScrolling}
+      <div class="sync-pill-container">
+        <button
+          class="sync-pill-btn"
+          onclick={resyncLyrics}
+          title="Revenir au couplet en direct (Échap pour synchroniser)"
+          aria-label="Synchroniser"
+        >
+          <span class="sync-pulse-dot"></span>
+          <span class="sync-label">
+            {#if scrollDirection === 'down'}
+              ↓ Revenir au direct
+            {:else if scrollDirection === 'up'}
+              ↑ Revenir au direct
+            {:else}
+              🎯 Synchroniser
+            {/if}
+          </span>
+          <span class="sync-hotkey-badge">Échap</span>
+        </button>
+      </div>
+    {/if}
   </main>
 </div>
 
@@ -912,5 +1083,123 @@
       0 2px 6px #000000,
       0 0 8px #000000,
       0 0 2px #000000;
+  }
+
+  .lyric-line.interactive {
+    cursor: pointer;
+  }
+
+  .lyric-line.interactive:hover {
+    opacity: 0.95;
+    text-shadow:
+      0 0 12px rgba(255, 255, 255, 0.5),
+      0 2px 4px #000000;
+  }
+
+  /* Bouton Flottant de Synchronisation (Mode Défilement Libre) */
+  .sync-pill-container {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 70;
+    pointer-events: auto;
+    animation: syncSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes syncSlideUp {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 10px) scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, 0) scale(1);
+    }
+  }
+
+  .sync-pill-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(56, 189, 248, 0.5);
+    color: #38bdf8;
+    padding: 5px 13px;
+    border-radius: 9999px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6), 0 0 12px rgba(56, 189, 248, 0.3);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .sync-pill-btn:hover {
+    background: rgba(56, 189, 248, 0.25);
+    border-color: #38bdf8;
+    color: #ffffff;
+    box-shadow: 0 6px 24px rgba(56, 189, 248, 0.5);
+    transform: scale(1.04);
+  }
+
+  .sync-pill-btn:active {
+    transform: scale(0.97);
+  }
+
+  .sync-pulse-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: #22c55e;
+    box-shadow: 0 0 8px #22c55e;
+    animation: pulse 1.5s infinite;
+    flex-shrink: 0;
+  }
+
+  .sync-label {
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+  }
+
+  .sync-hotkey-badge {
+    font-size: 0.68em;
+    font-weight: 600;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .badge-sync-btn {
+    background: rgba(56, 189, 248, 0.22);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    cursor: pointer;
+    font-weight: 700;
+    transition: all 0.15s ease;
+    animation: pulse 2s infinite;
+  }
+
+  .badge-sync-btn:hover {
+    background: rgba(56, 189, 248, 0.4);
+    color: #ffffff;
+    border-color: #38bdf8;
+    transform: scale(1.05);
+  }
+
+  .mini-dock-sync-btn {
+    background: rgba(56, 189, 248, 0.25);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.5);
+    animation: pulse 2s infinite;
+  }
+
+  .mini-dock-sync-btn:hover {
+    background: rgba(56, 189, 248, 0.45);
+    color: #ffffff;
+    border-color: #38bdf8;
   }
 </style>
