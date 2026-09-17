@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
+  import { emit, listen } from "@tauri-apps/api/event";
   import type { LyricLine, SongMetadata, PlaybackState, AppSettings, CurrentMediaState } from "../types";
 
   // State using Svelte 5 Runes
@@ -37,6 +37,14 @@
     clickThrough: false,
   });
 
+  const modeLabel = $derived(
+    settings.displayMode === "standard"
+      ? "🎴 Standard"
+      : settings.displayMode === "glass"
+        ? "🪟 Verre"
+        : "👻 Fantôme"
+  );
+
   async function cycleDisplayMode() {
     const modes: ("standard" | "glass" | "ghost")[] = ["standard", "glass", "ghost"];
     const nextIdx = (modes.indexOf(settings.displayMode) + 1) % modes.length;
@@ -46,7 +54,9 @@
     else if (settings.displayMode === "ghost") settings.opacity = 0.0;
 
     try {
-      localStorage.setItem("ghost_lyrics_settings", JSON.stringify($state.snapshot(settings)));
+      const snap = $state.snapshot(settings);
+      localStorage.setItem("ghost_lyrics_settings", JSON.stringify(snap));
+      await emit("settings_changed", snap);
     } catch (e) {}
   }
 
@@ -331,13 +341,7 @@
         title="Style d'affichage : Standard / Verre / Fantôme (clic pour basculer)"
         aria-label="Changer de mode"
       >
-        {#if settings.displayMode === 'standard'}
-          🎴 Standard
-        {:else if settings.displayMode === 'glass'}
-          🪟 Verre
-        {:else}
-          👻 Fantôme
-        {/if}
+        <span class="mode-text">{modeLabel}</span>
       </button>
 
       <!-- Indicateur d'état du lecteur -->
