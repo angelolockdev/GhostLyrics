@@ -68,8 +68,8 @@ impl LyricsService {
 
         Self {
             client: reqwest::Client::builder()
-                .user_agent("GhostLyrics/0.1.4 (https://github.com/angelolockdev/GhostLyrics)")
-                .timeout(std::time::Duration::from_secs(8))
+                .user_agent("GhostLyrics/0.1.5 (https://github.com/angelolockdev/GhostLyrics)")
+                .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
             cache_dir,
@@ -366,6 +366,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "test réseau direct vers lrclib.net"]
     async fn test_live_fetch_lyrics_queen() {
         let service = LyricsService::new();
         let res = service.fetch_lyrics("Bohemian Rhapsody", "Queen", None, None).await;
@@ -376,6 +377,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "test réseau direct vers lrclib.net"]
     async fn test_live_fetch_ninao_gims() {
         let service = LyricsService::new();
         // Teste avec un nom d'album erroné/inconnu pour vérifier que la cascade rattrape la correspondance
@@ -400,6 +402,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "test réseau direct vers lyrics.ovh"]
     async fn test_query_lyrics_ovh() {
         let service = LyricsService::new();
         let lyrics = service.query_lyrics_ovh("Papaoutai", "Stromae").await;
