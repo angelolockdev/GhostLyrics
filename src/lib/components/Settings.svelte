@@ -13,8 +13,10 @@
     backgroundColor: "rgba(15, 15, 20, 0.82)",
     timeOffsetMs: 0,
     hotkey: "Ctrl+Shift+L",
+    hudHotkey: "Ctrl+Shift+H",
     clickThrough: false,
     autoCheckUpdates: true,
+    auroraMode: "fluid",
   });
 
   let demoStatus = $state<string>("");
@@ -108,7 +110,7 @@
     }
   }
 
-  function setDisplayMode(mode: "standard" | "glass" | "ghost") {
+  function setDisplayMode(mode: "standard" | "glass" | "ghost" | "hud") {
     settings.displayMode = mode;
     if (mode === "standard") {
       settings.opacity = 0.88;
@@ -116,7 +118,14 @@
       settings.opacity = 0.28;
     } else if (mode === "ghost") {
       settings.opacity = 0.0;
+    } else if (mode === "hud") {
+      settings.opacity = 0.88;
     }
+    notifySettingsChanged();
+  }
+
+  function setAuroraMode(mode: "fluid" | "eco" | "off") {
+    settings.auroraMode = mode;
     notifySettingsChanged();
   }
 
@@ -209,6 +218,63 @@
           <div class="mode-info">
             <strong>Fantôme Pur</strong>
             <small>Zéro boîte, zéro fond. Seules les paroles flottent sur votre écran.</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card {settings.displayMode === 'hud' ? 'mode-active' : ''}"
+          onclick={() => setDisplayMode('hud')}
+        >
+          <span class="mode-icon">💊</span>
+          <div class="mode-info">
+            <strong>HUD Compact (Dynamic Island)</strong>
+            <small>Capsule discrète (480×84 px) avec vers actif en mot-à-mot et aperçu suivant.</small>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <!-- Section Aurora Glow -->
+    <div class="card">
+      <h3>🌌 Halo Aurora Glow Réactif (Arrière-plan dynamique)</h3>
+      <p class="description">
+        Projette un halo néon liquide fluide dérivé de la musique en cours, accéléré par le GPU (aucun impact sur vos FPS en jeu).
+      </p>
+      <div class="mode-cards" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+        <button
+          type="button"
+          class="mode-card {settings.auroraMode === 'fluid' || !settings.auroraMode ? 'mode-active' : ''}"
+          onclick={() => setAuroraMode('fluid')}
+        >
+          <span class="mode-icon">🌊</span>
+          <div class="mode-info">
+            <strong>Fluide (60/144 FPS)</strong>
+            <small>Animation orbitale fluide continue accélérée par GPU.</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card {settings.auroraMode === 'eco' ? 'mode-active' : ''}"
+          onclick={() => setAuroraMode('eco')}
+        >
+          <span class="mode-icon">🍃</span>
+          <div class="mode-info">
+            <strong>Éco (Statique)</strong>
+            <small>Halo fixe extrait de la musique (0% de charge GPU).</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card {settings.auroraMode === 'off' ? 'mode-active' : ''}"
+          onclick={() => setAuroraMode('off')}
+        >
+          <span class="mode-icon">⛔</span>
+          <div class="mode-info">
+            <strong>Désactivé</strong>
+            <small>Arrière-plan sombre translucide standard.</small>
           </div>
         </button>
       </div>
@@ -354,8 +420,12 @@
           <span>GhostLyrics se loge près de l'horloge Windows. Cliquez dessus pour afficher ou masquer l'overlay à tout instant.</span>
         </div>
         <div class="info-item">
-          <strong>👻 Raccourci global :</strong>
+          <strong>👻 Raccourci global Fantôme :</strong>
           <span><code>Ctrl + Shift + L</code> verrouille l'overlay en mode transparent aux clics.</span>
+        </div>
+        <div class="info-item">
+          <strong>💊 Raccourci global HUD :</strong>
+          <span><code>Ctrl + Shift + H</code> commute instantanément entre le grand overlay et la capsule compacte.</span>
         </div>
       </div>
     </div>

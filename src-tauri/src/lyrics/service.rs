@@ -1,4 +1,4 @@
-use super::parser::{parse_lrc, LyricLine};
+use super::parser::{estimate_syllables_for_line, parse_lrc, LyricLine};
 use super::sanitizer::{get_artist_variants, sanitize_track_title};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -312,22 +312,26 @@ fn generate_paced_lines(plain_text: &str, duration_sec: Option<f64>) -> Vec<Lyri
 
         for (i, line) in raw_lines.iter().enumerate() {
             let start_time_ms = (start_offset + (i as f64 * interval)).round() as i64;
-            let end_time_ms = Some(((start_offset + ((i + 1) as f64 * interval)).round() as i64).min(total_ms as i64));
+            let end_time_ms_val = ((start_offset + ((i + 1) as f64 * interval)).round() as i64).min(total_ms as i64);
+            let words = estimate_syllables_for_line(line, start_time_ms, end_time_ms_val);
             paced.push(LyricLine {
                 start_time_ms,
-                end_time_ms,
+                end_time_ms: Some(end_time_ms_val),
                 text: line.to_string(),
+                words,
             });
         }
     } else {
         // Durée inconnue : pacing fixe à 3.5s par ligne
         for (i, line) in raw_lines.iter().enumerate() {
             let start_time_ms = (i as i64) * 3500;
-            let end_time_ms = Some(start_time_ms + 3500);
+            let end_time_ms_val = start_time_ms + 3500;
+            let words = estimate_syllables_for_line(line, start_time_ms, end_time_ms_val);
             paced.push(LyricLine {
                 start_time_ms,
-                end_time_ms,
+                end_time_ms: Some(end_time_ms_val),
                 text: line.to_string(),
+                words,
             });
         }
     }

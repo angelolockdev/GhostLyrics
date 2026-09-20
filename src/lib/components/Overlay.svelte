@@ -2,7 +2,9 @@
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { emit, listen } from "@tauri-apps/api/event";
-  import type { LyricLine, SongMetadata, PlaybackState, AppSettings, CurrentMediaState } from "../types";
+  import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+  import { register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
+  import type { LyricLine, LyricWord, SongMetadata, PlaybackState, AppSettings, CurrentMediaState } from "../types";
 
   // State using Svelte 5 Runes
   let currentSong = $state<SongMetadata>({
@@ -20,9 +22,50 @@
   });
 
   let lyrics = $state<LyricLine[]>([
-    { startTimeMs: 0, text: "GhostLyrics — Prêt à afficher vos paroles" },
-    { startTimeMs: 4000, text: "Lancez Spotify ou YouTube pour démarrer la synchronisation" },
-    { startTimeMs: 8000, text: "Ou testez la démo instantanée dans les Paramètres (⚙️)" },
+    {
+      startTimeMs: 0,
+      endTimeMs: 4000,
+      text: "GhostLyrics — Prêt à afficher vos paroles",
+      words: [
+        { text: "GhostLyrics", startTimeMs: 0, endTimeMs: 1400 },
+        { text: "—", startTimeMs: 1400, endTimeMs: 1800 },
+        { text: "Prêt", startTimeMs: 1800, endTimeMs: 2400 },
+        { text: "à", startTimeMs: 2400, endTimeMs: 2700 },
+        { text: "afficher", startTimeMs: 2700, endTimeMs: 3400 },
+        { text: "vos", startTimeMs: 3400, endTimeMs: 3700 },
+        { text: "paroles", startTimeMs: 3700, endTimeMs: 4000 },
+      ],
+    },
+    {
+      startTimeMs: 4000,
+      endTimeMs: 8000,
+      text: "Lancez Spotify ou YouTube pour démarrer la synchronisation",
+      words: [
+        { text: "Lancez", startTimeMs: 4000, endTimeMs: 4600 },
+        { text: "Spotify", startTimeMs: 4600, endTimeMs: 5400 },
+        { text: "ou", startTimeMs: 5400, endTimeMs: 5700 },
+        { text: "YouTube", startTimeMs: 5700, endTimeMs: 6500 },
+        { text: "pour", startTimeMs: 6500, endTimeMs: 6900 },
+        { text: "démarrer", startTimeMs: 6900, endTimeMs: 7500 },
+        { text: "la", startTimeMs: 7500, endTimeMs: 7700 },
+        { text: "synchronisation", startTimeMs: 7700, endTimeMs: 8000 },
+      ],
+    },
+    {
+      startTimeMs: 8000,
+      endTimeMs: 12000,
+      text: "Ou testez la démo instantanée dans les Paramètres (⚙️)",
+      words: [
+        { text: "Ou", startTimeMs: 8000, endTimeMs: 8300 },
+        { text: "testez", startTimeMs: 8300, endTimeMs: 8900 },
+        { text: "la", startTimeMs: 8900, endTimeMs: 9100 },
+        { text: "démo", startTimeMs: 9100, endTimeMs: 9800 },
+        { text: "instantanée", startTimeMs: 9800, endTimeMs: 10800 },
+        { text: "dans", startTimeMs: 10800, endTimeMs: 11100 },
+        { text: "les", startTimeMs: 11100, endTimeMs: 11300 },
+        { text: "Paramètres", startTimeMs: 11300, endTimeMs: 12000 },
+      ],
+    },
   ]);
 
   let settings = $state<AppSettings>({
@@ -34,8 +77,45 @@
     backgroundColor: "rgba(15, 15, 20, 0.82)",
     timeOffsetMs: 0,
     hotkey: "Ctrl+Shift+L",
+    hudHotkey: "Ctrl+Shift+H",
     clickThrough: false,
+    auroraMode: "fluid",
   });
+
+  let auroraColors = $state<{ c1: string; c2: string; c3: string }>({
+    c1: "rgba(56, 189, 248, 0.25)",
+    c2: "rgba(129, 140, 248, 0.22)",
+    c3: "rgba(236, 72, 153, 0.18)",
+  });
+
+  function updateAuroraPalette(title: string, artist: string) {
+    let hash = 0;
+    const str = `${title}-${artist}`;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const hue1 = Math.abs(hash) % 360;
+    const hue2 = (hue1 + 45) % 360;
+    const hue3 = (hue1 + 120) % 360;
+
+    auroraColors = {
+      c1: `hsla(${hue1}, 85%, 55%, 0.26)`,
+      c2: `hsla(${hue2}, 80%, 50%, 0.22)`,
+      c3: `hsla(${hue3}, 75%, 48%, 0.18)`,
+    };
+  }
+
+  function getWordStatus(word: { startTimeMs: number; endTimeMs: number }, currentPosMs: number) {
+    if (currentPosMs >= word.endTimeMs) {
+      return { state: "completed", progress: 100 };
+    }
+    if (currentPosMs < word.startTimeMs) {
+      return { state: "upcoming", progress: 0 };
+    }
+    const duration = Math.max(1, word.endTimeMs - word.startTimeMs);
+    const progress = Math.min(100, Math.max(0, ((currentPosMs - word.startTimeMs) / duration) * 100));
+    return { state: "singing", progress };
+  }
 
   let isHeaderHidden = $state<boolean>(false);
 
@@ -51,30 +131,69 @@
       ? "🎴 Standard"
       : settings.displayMode === "glass"
         ? "🪟 Verre"
-        : "👻 Fantôme"
+        : settings.displayMode === "hud"
+          ? "💊 HUD"
+          : "👻 Fantôme"
   );
 
-  async function cycleDisplayMode() {
-    const modes: ("standard" | "glass" | "ghost")[] = ["standard", "glass", "ghost"];
-    const nextIdx = (modes.indexOf(settings.displayMode) + 1) % modes.length;
-    settings.displayMode = modes[nextIdx];
-    if (settings.displayMode === "standard") {
-      settings.opacity = 0.88;
-      isHeaderHidden = false;
-    } else if (settings.displayMode === "glass") {
-      settings.opacity = 0.28;
-      isHeaderHidden = false;
-    } else if (settings.displayMode === "ghost") {
-      settings.opacity = 0.0;
-      isHeaderHidden = true;
-    }
-
+  async function notifySettingsChanged() {
     try {
       const snap = $state.snapshot(settings);
       localStorage.setItem("ghost_lyrics_settings", JSON.stringify(snap));
       localStorage.setItem("ghost_lyrics_header_hidden", JSON.stringify(isHeaderHidden));
       await emit("settings_changed", snap);
     } catch (e) {}
+  }
+
+  async function applyDisplayMode(newMode: "standard" | "glass" | "ghost" | "hud") {
+    const prevMode = settings.displayMode;
+    settings.displayMode = newMode;
+
+    try {
+      const appWin = getCurrentWindow();
+      if (newMode === "hud") {
+        settings.opacity = 0.90;
+        isHeaderHidden = true;
+        const curSize = await appWin.innerSize();
+        if (prevMode !== "hud") {
+          localStorage.setItem("ghost_lyrics_prev_size", JSON.stringify({ width: curSize.width, height: curSize.height }));
+        }
+        await appWin.setSize(new LogicalSize(480, 84));
+      } else {
+        if (prevMode === "hud") {
+          const savedSizeStr = localStorage.getItem("ghost_lyrics_prev_size");
+          if (savedSizeStr) {
+            try {
+              const saved = JSON.parse(savedSizeStr);
+              await appWin.setSize(new LogicalSize(saved.width || 800, saved.height || 220));
+            } catch (e) {
+              await appWin.setSize(new LogicalSize(800, 220));
+            }
+          } else {
+            await appWin.setSize(new LogicalSize(800, 220));
+          }
+        }
+
+        if (newMode === "standard") {
+          settings.opacity = 0.88;
+          isHeaderHidden = false;
+        } else if (newMode === "glass") {
+          settings.opacity = 0.28;
+          isHeaderHidden = false;
+        } else if (newMode === "ghost") {
+          settings.opacity = 0.0;
+          isHeaderHidden = true;
+        }
+      }
+    } catch (e) {}
+
+    await notifySettingsChanged();
+  }
+
+  async function cycleDisplayMode() {
+    const modes: ("standard" | "glass" | "ghost" | "hud")[] = ["standard", "glass", "ghost", "hud"];
+    const nextIdx = (modes.indexOf(settings.displayMode) + 1) % modes.length;
+    await applyDisplayMode(modes[nextIdx]);
   }
 
   let hasDetectedPlayer = $state<boolean>(false);
@@ -113,6 +232,7 @@
   let unlistenDemo: (() => void) | null = null;
   let unlistenManual: (() => void) | null = null;
   let unlistenSettings: (() => void) | null = null;
+  let handleKeyDown: ((e: KeyboardEvent) => void) | null = null;
 
   async function pollMedia() {
     try {
@@ -403,15 +523,35 @@
 
     // 3. Écouteurs d'événements Tauri
     try {
-      unlistenSettings = await listen<AppSettings>("settings_changed", (event) => {
+      unlistenSettings = await listen<AppSettings>("settings_changed", async (event) => {
         const prevMode = settings.displayMode;
         Object.assign(settings, event.payload);
-        if (event.payload.displayMode === "ghost" && prevMode !== "ghost") {
+        if (event.payload.displayMode !== prevMode) {
+          await applyDisplayMode(event.payload.displayMode);
+        } else if (event.payload.displayMode === "ghost") {
           isHeaderHidden = true;
-        } else if (event.payload.displayMode !== "ghost" && prevMode === "ghost") {
-          isHeaderHidden = false;
         }
       });
+
+      // Enregistrement des raccourcis globaux
+      try {
+        await unregisterAll();
+        await register(settings.hotkey || "Ctrl+Shift+L", async (event) => {
+          if (event.state === "Pressed") {
+            settings.clickThrough = !settings.clickThrough;
+            await invoke("set_overlay_click_through", { enable: settings.clickThrough });
+            await notifySettingsChanged();
+          }
+        });
+        await register(settings.hudHotkey || "Ctrl+Shift+H", async (event) => {
+          if (event.state === "Pressed") {
+            const next = settings.displayMode === "hud" ? "standard" : "hud";
+            await applyDisplayMode(next);
+          }
+        });
+      } catch (errShortcuts) {
+        console.warn("Raccourcis globaux non enregistrés:", errShortcuts);
+      }
 
       unlistenDemo = await listen<{ title: string; artist: string; durationMs: number }>("play_demo_song", async (event) => {
         isDemoMode = true;
@@ -430,6 +570,7 @@
           playbackRate: 1.0,
         };
         lastInterpolatedPositionMs = 0;
+        updateAuroraPalette(event.payload.title, event.payload.artist);
         await loadLyricsForSong(event.payload.title, event.payload.artist, undefined, event.payload.durationMs);
       });
 
@@ -450,6 +591,7 @@
           playbackRate: 1.0,
         };
         lastInterpolatedPositionMs = 0;
+        updateAuroraPalette(event.payload.title, event.payload.artist);
         await loadLyricsForSong(event.payload.title, event.payload.artist);
       });
     } catch (e) {
@@ -457,8 +599,12 @@
     }
 
     // 4. Navigation clavier et touche Échap pour synchroniser
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isManualScrolling) {
+    handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "H" || e.key === "h")) {
+        e.preventDefault();
+        const next = settings.displayMode === "hud" ? "standard" : "hud";
+        applyDisplayMode(next);
+      } else if (e.key === "Escape" && isManualScrolling) {
         e.preventDefault();
         resyncLyrics();
       } else if (e.key === "ArrowUp") {
@@ -493,7 +639,10 @@
     if (animationFrameId) cancelAnimationFrame(animationFrameId);
     if (pollIntervalId) clearInterval(pollIntervalId);
     if (autoResyncTimeout) clearTimeout(autoResyncTimeout);
-    window.removeEventListener("keydown", handleKeyDown);
+    if (handleKeyDown) window.removeEventListener("keydown", handleKeyDown);
+    try {
+      unregisterAll();
+    } catch (e) {}
     if (unlistenDemo) unlistenDemo();
     if (unlistenManual) unlistenManual();
     if (unlistenSettings) unlistenSettings();
@@ -504,215 +653,333 @@
   class="overlay-container mode-{settings.displayMode} {isHeaderHidden ? 'header-hidden' : ''}"
   style="
     --bg-opacity: {settings.opacity};
+    --active-color: {settings.activeColor};
+    --text-color: {settings.textColor};
+    --active-color-glow: {settings.activeColor}66;
     font-size: {settings.fontSize}px;
   "
   data-tauri-drag-region
 >
-  {#if !isHeaderHidden}
-    <!-- Header Bar compact & épuré -->
-    <header class="overlay-header">
-      <!-- Zone Déplaçable (Drag region) -->
-      <div class="drag-zone" data-tauri-drag-region>
-        <span class="music-icon" data-tauri-drag-region>🎵</span>
-        <div class="song-meta" data-tauri-drag-region>
-          <span class="track-title" title="{currentSong.title}">{currentSong.title}</span>
-          {#if currentSong.artist}
-            <span class="track-artist" title="{currentSong.artist}">— {currentSong.artist}</span>
-          {/if}
+  <!-- Halo Aurora Glow Réactif (Fluid Mesh Gradient) -->
+  {#if settings.auroraMode !== "off" && settings.displayMode !== "ghost"}
+    <div
+      class="aurora-container {settings.auroraMode === 'eco' ? 'eco' : 'fluid'}"
+      aria-hidden="true"
+      style="
+        --aurora-c1: {auroraColors.c1};
+        --aurora-c2: {auroraColors.c2};
+        --aurora-c3: {auroraColors.c3};
+      "
+    >
+      <div class="aurora-blob blob-1"></div>
+      <div class="aurora-blob blob-2"></div>
+      <div class="aurora-blob blob-3"></div>
+    </div>
+  {/if}
+
+  {#if settings.displayMode === "hud"}
+    <!-- Mode HUD Compact (Dynamic Island Capsule) -->
+    <div class="hud-capsule-layout" data-tauri-drag-region>
+      <div class="hud-top-meta" data-tauri-drag-region>
+        <div class="hud-source-badge">
+          <span class="hud-live-dot {playback.isPlaying ? 'pulsing' : ''}"></span>
+          <span class="hud-source-name">{currentSong.title} — {currentSong.artist}</span>
         </div>
-      </div>
-
-      <!-- Badges d'état et contrôles de la fenêtre -->
-      <div class="header-actions">
-        <!-- Sélecteur de mode d'affichage rapide -->
-        <button
-          class="mode-pill-btn"
-          onclick={cycleDisplayMode}
-          title="Style d'affichage : Standard / Verre / Fantôme (clic pour basculer)"
-          aria-label="Changer de mode"
-        >
-          <span class="mode-text">{modeLabel}</span>
-        </button>
-
-        <!-- Indicateur d'état du lecteur ultra-compact -->
-        <div
-          class="player-status-pill"
-          title={isDemoMode
-            ? "Mode Démo actif"
-            : !hasDetectedPlayer
-              ? "En attente d'un lecteur (Spotify, Deezer, YouTube...)"
-              : `${currentSong.sourceApp || 'Lecteur'} • ${playback.isPlaying ? 'En lecture' : 'En pause'}`}
-        >
-          {#if isDemoMode}
-            <span class="status-dot dot-demo"></span>
-            <span class="status-text">Démo</span>
-          {:else if !hasDetectedPlayer}
-            <span class="status-dot dot-waiting"></span>
-            <span class="status-text">Attente</span>
-          {:else if playback.isPlaying}
-            <span class="status-dot dot-playing"></span>
-            <span class="status-text">{currentSong.sourceApp || "Actif"}</span>
-          {:else}
-            <span class="status-dot dot-paused"></span>
-            <span class="status-text">Pause</span>
-          {/if}
-        </div>
-
-        {#if isFetchingLyrics}
-          <span class="badge badge-loading" title="Recherche des paroles en cours...">⏳</span>
-        {:else if currentLyricsSource}
-          <span
-            class="badge {isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
-            title={isCurrentSynced ? `Synchronisé (.lrc) via ${currentLyricsSource}` : `Défilement temporel estimé via ${currentLyricsSource}`}
-          >
-            {isCurrentSynced ? '🟢 LRC' : '🟡 Texte'}
-          </span>
-        {/if}
-
-        {#if availableUpdate}
+        <div class="hud-actions">
           <button
-            class="badge badge-update-alert"
+            class="hud-action-btn"
+            onclick={() => applyDisplayMode("standard")}
+            title="Agrandir l'overlay (Ctrl+Shift+H)"
+            aria-label="Agrandir"
+          >
+            ⤢
+          </button>
+          <button
+            class="hud-action-btn"
             onclick={handleOpenSettings}
-            title="Nouvelle version v{availableUpdate} disponible ! Cliquez pour mettre à jour."
-          >
-            ✨ v{availableUpdate}
-          </button>
-        {/if}
-
-        {#if isManualScrolling}
-          <button
-            class="badge badge-sync-btn"
-            onclick={resyncLyrics}
-            title="Défilement manuel actif. Cliquez pour revenir au couplet en direct (ou Échap)"
-          >
-            🔄 Direct
-          </button>
-        {/if}
-
-        <!-- Boutons de contrôle -->
-        <div class="window-controls">
-          <!-- Bouton pour masquer la barre de menu (Mode Paroles Seules) -->
-          <button
-            class="ctrl-btn btn-toggle-header"
-            onclick={toggleHeaderVisibility}
-            title="Masquer les menus (Mode épuré / Paroles seules)"
-            aria-label="Masquer les menus"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-              <line x1="1" y1="1" x2="23" y2="23"></line>
-            </svg>
-          </button>
-          <button
-            class="ctrl-btn btn-settings"
-            onclick={handleOpenSettings}
-            title="Ouvrir les paramètres (⚙️)"
+            title="Paramètres (⚙️)"
             aria-label="Paramètres"
           >
             ⚙️
           </button>
           <button
-            class="ctrl-btn btn-minimize"
+            class="hud-action-btn"
             onclick={handleMinimize}
-            title="Réduire dans la zone de notification Windows (icônes cachées)"
+            title="Réduire"
             aria-label="Réduire"
           >
             —
           </button>
-          <button
-            class="ctrl-btn btn-close"
-            onclick={handleCloseApp}
-            title="Quitter GhostLyrics"
-            aria-label="Quitter"
-          >
-            ✕
-          </button>
         </div>
       </div>
-    </header>
+
+      <!-- Vers Actif en Karaoké Mot-à-Mot -->
+      <div class="hud-active-verse" style="color: {settings.activeColor};" data-tauri-drag-region>
+        {#if currentLineIndex >= 0 && lyrics[currentLineIndex]}
+          {@const activeLine = lyrics[currentLineIndex]}
+          {#if activeLine.words && activeLine.words.length > 0}
+            <span class="karaoke-words-container">
+              {#each activeLine.words as word, wIdx}
+                {@const status = getWordStatus(word, interpolatedPositionMs)}
+                <span
+                  class="karaoke-word {status.state}"
+                  style="--word-progress: {status.progress}%;"
+                >{word.text}{wIdx < activeLine.words.length - 1 ? ' ' : ''}</span>
+              {/each}
+            </span>
+          {:else}
+            {activeLine.text}
+          {/if}
+        {:else}
+          <span class="hud-idle-text">🎵 En attente des paroles...</span>
+        {/if}
+      </div>
+
+      <!-- Vers Suivant (Teaser atténué) -->
+      {#if currentLineIndex >= 0 && currentLineIndex + 1 < lyrics.length}
+        <div class="hud-next-verse" style="color: {settings.textColor};" data-tauri-drag-region>
+          ↳ {lyrics[currentLineIndex + 1].text}
+        </div>
+      {/if}
+    </div>
   {:else}
-    <!-- Mini Dock Flottant : Visible quand les menus sont masqués (Paroles seules) -->
-    <div class="mini-floating-dock" data-tauri-drag-region>
-      {#if isManualScrolling}
+    <!-- Mode Standard, Verre ou Fantôme -->
+    {#if !isHeaderHidden}
+      <!-- Header Bar compact & épuré -->
+      <header class="overlay-header">
+        <!-- Zone Déplaçable (Drag region) -->
+        <div class="drag-zone" data-tauri-drag-region>
+          <span class="music-icon" data-tauri-drag-region>🎵</span>
+          <div class="song-meta" data-tauri-drag-region>
+            <span class="track-title" title="{currentSong.title}">{currentSong.title}</span>
+            {#if currentSong.artist}
+              <span class="track-artist" title="{currentSong.artist}">— {currentSong.artist}</span>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Badges d'état et contrôles de la fenêtre -->
+        <div class="header-actions">
+          <!-- Sélecteur de mode d'affichage rapide -->
+          <button
+            class="mode-pill-btn"
+            onclick={cycleDisplayMode}
+            title="Style d'affichage : Standard / Verre / Fantôme / HUD (clic pour basculer)"
+            aria-label="Changer de mode"
+          >
+            <span class="mode-text">{modeLabel}</span>
+          </button>
+
+          <!-- Indicateur d'état du lecteur ultra-compact -->
+          <div
+            class="player-status-pill"
+            title={isDemoMode
+              ? "Mode Démo actif"
+              : !hasDetectedPlayer
+                ? "En attente d'un lecteur (Spotify, Deezer, YouTube...)"
+                : `${currentSong.sourceApp || 'Lecteur'} • ${playback.isPlaying ? 'En lecture' : 'En pause'}`}
+          >
+            {#if isDemoMode}
+              <span class="status-dot dot-demo"></span>
+              <span class="status-text">Démo</span>
+            {:else if !hasDetectedPlayer}
+              <span class="status-dot dot-waiting"></span>
+              <span class="status-text">Attente</span>
+            {:else if playback.isPlaying}
+              <span class="status-dot dot-playing"></span>
+              <span class="status-text">{currentSong.sourceApp || "Actif"}</span>
+            {:else}
+              <span class="status-dot dot-paused"></span>
+              <span class="status-text">Pause</span>
+            {/if}
+          </div>
+
+          {#if isFetchingLyrics}
+            <span class="badge badge-loading" title="Recherche des paroles en cours...">⏳</span>
+          {:else if currentLyricsSource}
+            <span
+              class="badge {isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
+              title={isCurrentSynced ? `Synchronisé (.lrc) via ${currentLyricsSource}` : `Défilement temporel estimé via ${currentLyricsSource}`}
+            >
+              {isCurrentSynced ? '🟢 LRC' : '🟡 Texte'}
+            </span>
+          {/if}
+
+          {#if availableUpdate}
+            <button
+              class="badge badge-update-alert"
+              onclick={handleOpenSettings}
+              title="Nouvelle version v{availableUpdate} disponible ! Cliquez pour mettre à jour."
+            >
+              ✨ v{availableUpdate}
+            </button>
+          {/if}
+
+          {#if isManualScrolling}
+            <button
+              class="badge badge-sync-btn"
+              onclick={resyncLyrics}
+              title="Défilement manuel actif. Cliquez pour revenir au couplet en direct (ou Échap)"
+            >
+              🔄 Direct
+            </button>
+          {/if}
+
+          <!-- Boutons de contrôle -->
+          <div class="window-controls">
+            <!-- Bouton Mode HUD Compact -->
+            <button
+              class="ctrl-btn btn-hud"
+              onclick={() => applyDisplayMode("hud")}
+              title="Passer en mode HUD Compact / Dynamic Island (Ctrl+Shift+H)"
+              aria-label="Mode HUD"
+            >
+              💊
+            </button>
+
+            <!-- Bouton pour masquer la barre de menu (Mode Paroles Seules) -->
+            <button
+              class="ctrl-btn btn-toggle-header"
+              onclick={toggleHeaderVisibility}
+              title="Masquer les menus (Mode épuré / Paroles seules)"
+              aria-label="Masquer les menus"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                <line x1="1" y1="1" x2="23" y2="23"></line>
+              </svg>
+            </button>
+            <button
+              class="ctrl-btn btn-settings"
+              onclick={handleOpenSettings}
+              title="Ouvrir les paramètres (⚙️)"
+              aria-label="Paramètres"
+            >
+              ⚙️
+            </button>
+            <button
+              class="ctrl-btn btn-minimize"
+              onclick={handleMinimize}
+              title="Réduire dans la zone de notification Windows (icônes cachées)"
+              aria-label="Réduire"
+            >
+              —
+            </button>
+            <button
+              class="ctrl-btn btn-close"
+              onclick={handleCloseApp}
+              title="Quitter GhostLyrics"
+              aria-label="Quitter"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      </header>
+    {:else}
+      <!-- Mini Dock Flottant : Visible quand les menus sont masqués (Paroles seules) -->
+      <div class="mini-floating-dock" data-tauri-drag-region>
+        {#if isManualScrolling}
+          <button
+            class="mini-dock-btn mini-dock-sync-btn"
+            onclick={resyncLyrics}
+            title="Revenir au couplet en direct (ou Échap)"
+            aria-label="Synchroniser"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            </svg>
+          </button>
+        {/if}
         <button
-          class="mini-dock-btn mini-dock-sync-btn"
-          onclick={resyncLyrics}
-          title="Revenir au couplet en direct (ou Échap)"
-          aria-label="Synchroniser"
+          class="mini-dock-btn"
+          onclick={() => applyDisplayMode("hud")}
+          title="Mode HUD Compact (Ctrl+Shift+H)"
+          aria-label="Mode HUD"
+        >
+          💊
+        </button>
+        <button
+          class="mini-dock-btn"
+          onclick={toggleHeaderVisibility}
+          title="Afficher les menus et contrôles"
+          aria-label="Afficher les menus"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
           </svg>
-        </button>
-      {/if}
-      <button
-        class="mini-dock-btn"
-        onclick={toggleHeaderVisibility}
-        title="Afficher les menus et contrôles"
-        aria-label="Afficher les menus"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-          <circle cx="12" cy="12" r="3"></circle>
-        </svg>
-      </button>
-    </div>
-  {/if}
-
-  <!-- Lyrics Display Area : Centrage vertical exact sur la ligne active -->
-  <main class="lyrics-viewport" data-tauri-drag-region onwheel={handleWheel}>
-    <div
-      class="lyrics-list"
-      style="transform: translateY(-{currentScrollY}px);"
-      data-tauri-drag-region
-    >
-      {#each lyrics as line, index}
-        <div
-          bind:this={lineElements[index]}
-          class="lyric-line {index === currentLineIndex ? 'active' : ''} {isManualScrolling ? 'interactive' : ''}"
-          role="button"
-          tabindex="0"
-          onclick={() => scrollToLine(index)}
-          onkeydown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              scrollToLine(index);
-            }
-          }}
-          style="
-            color: {index === currentLineIndex ? settings.activeColor : settings.textColor};
-            font-size: {index === currentLineIndex ? settings.fontSize * 1.16 : settings.fontSize}px;
-          "
-        >
-          {line.text}
-        </div>
-      {/each}
-    </div>
-
-    <!-- Bouton Flottant de Synchronisation -->
-    {#if isManualScrolling}
-      <div class="sync-pill-container">
-        <button
-          class="sync-pill-btn"
-          onclick={resyncLyrics}
-          title="Revenir au couplet en direct (Échap pour synchroniser)"
-          aria-label="Synchroniser"
-        >
-          <span class="sync-pulse-dot"></span>
-          <span class="sync-label">
-            {#if scrollDirection === 'down'}
-              ↓ Revenir au direct
-            {:else if scrollDirection === 'up'}
-              ↑ Revenir au direct
-            {:else}
-              🎯 Synchroniser
-            {/if}
-          </span>
-          <span class="sync-hotkey-badge">Échap</span>
         </button>
       </div>
     {/if}
-  </main>
+
+    <!-- Lyrics Display Area : Centrage vertical exact sur la ligne active -->
+    <main class="lyrics-viewport" data-tauri-drag-region onwheel={handleWheel}>
+      <div
+        class="lyrics-list"
+        style="transform: translateY(-{currentScrollY}px);"
+        data-tauri-drag-region
+      >
+        {#each lyrics as line, index}
+          <div
+            bind:this={lineElements[index]}
+            class="lyric-line {index === currentLineIndex ? 'active' : ''} {isManualScrolling ? 'interactive' : ''}"
+            role="button"
+            tabindex="0"
+            onclick={() => scrollToLine(index)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                scrollToLine(index);
+              }
+            }}
+            style="
+              color: {index === currentLineIndex ? settings.activeColor : settings.textColor};
+              font-size: {index === currentLineIndex ? settings.fontSize * 1.16 : settings.fontSize}px;
+            "
+          >
+            {#if index === currentLineIndex && line.words && line.words.length > 0}
+              <span class="karaoke-words-container">
+                {#each line.words as word, wIdx}
+                  {@const status = getWordStatus(word, interpolatedPositionMs)}
+                  <span
+                    class="karaoke-word {status.state}"
+                    style="--word-progress: {status.progress}%;"
+                  >{word.text}{wIdx < line.words.length - 1 ? ' ' : ''}</span>
+                {/each}
+              </span>
+            {:else}
+              {line.text}
+            {/if}
+          </div>
+        {/each}
+      </div>
+
+      <!-- Bouton Flottant de Synchronisation -->
+      {#if isManualScrolling}
+        <div class="sync-pill-container">
+          <button
+            class="sync-pill-btn"
+            onclick={resyncLyrics}
+            title="Revenir au couplet en direct (Échap pour synchroniser)"
+            aria-label="Synchroniser"
+          >
+            <span class="sync-pulse-dot"></span>
+            <span class="sync-label">
+              {#if scrollDirection === 'down'}
+                ↓ Revenir au direct
+              {:else if scrollDirection === 'up'}
+                ↑ Revenir au direct
+              {:else}
+                🎯 Synchroniser
+              {/if}
+            </span>
+            <span class="sync-hotkey-badge">Échap</span>
+          </button>
+        </div>
+      {/if}
+    </main>
+  {/if}
 </div>
 
 <style>
@@ -1201,5 +1468,241 @@
     background: rgba(56, 189, 248, 0.45);
     color: #ffffff;
     border-color: #38bdf8;
+  }
+
+  /* ========================================================================= */
+  /* 🌌 1. Halo Aurora Glow Réactif (Arrière-plan dynamique GPU)                */
+  /* ========================================================================= */
+  .aurora-container {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 0;
+    border-radius: inherit;
+  }
+
+  .aurora-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(52px);
+    will-change: transform;
+    opacity: 0.85;
+    transform: translate3d(0, 0, 0);
+  }
+
+  .blob-1 {
+    top: -15%;
+    left: -10%;
+    width: 65%;
+    height: 65%;
+    background: radial-gradient(circle, var(--aurora-c1), transparent 70%);
+  }
+
+  .blob-2 {
+    bottom: -15%;
+    right: -10%;
+    width: 70%;
+    height: 70%;
+    background: radial-gradient(circle, var(--aurora-c2), transparent 70%);
+  }
+
+  .blob-3 {
+    top: 25%;
+    left: 25%;
+    width: 55%;
+    height: 55%;
+    background: radial-gradient(circle, var(--aurora-c3), transparent 70%);
+  }
+
+  .aurora-container.fluid .blob-1 {
+    animation: aurora-float-1 18s ease-in-out infinite alternate;
+  }
+
+  .aurora-container.fluid .blob-2 {
+    animation: aurora-float-2 22s ease-in-out infinite alternate;
+  }
+
+  .aurora-container.fluid .blob-3 {
+    animation: aurora-float-3 15s ease-in-out infinite alternate;
+  }
+
+  .aurora-container.eco .blob-1,
+  .aurora-container.eco .blob-2,
+  .aurora-container.eco .blob-3 {
+    animation: none;
+  }
+
+  @keyframes aurora-float-1 {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(25px, 20px, 0) scale(1.12); }
+    100% { transform: translate3d(-15px, 35px, 0) scale(0.95); }
+  }
+
+  @keyframes aurora-float-2 {
+    0% { transform: translate3d(0, 0, 0) scale(1); }
+    50% { transform: translate3d(-30px, -25px, 0) scale(1.15); }
+    100% { transform: translate3d(20px, -15px, 0) scale(0.92); }
+  }
+
+  @keyframes aurora-float-3 {
+    0% { transform: translate3d(0, 0, 0) scale(0.9); }
+    50% { transform: translate3d(-20px, 25px, 0) scale(1.18); }
+    100% { transform: translate3d(25px, -20px, 0) scale(1); }
+  }
+
+  /* ========================================================================= */
+  /* 🎤 2. Karaoké Mot-à-Mot « Apple Music Sing »                              */
+  /* ========================================================================= */
+  .karaoke-words-container {
+    display: inline;
+    line-height: inherit;
+  }
+
+  .karaoke-word {
+    display: inline-block;
+    white-space: pre-wrap;
+    transition: transform 0.12s ease-out;
+  }
+
+  .karaoke-word.completed {
+    color: var(--active-color, #38bdf8);
+    text-shadow: 0 0 14px var(--active-color-glow, rgba(56, 189, 248, 0.5));
+  }
+
+  .karaoke-word.singing {
+    background: linear-gradient(
+      90deg,
+      var(--active-color, #38bdf8) 0%,
+      var(--active-color, #38bdf8) var(--word-progress, 0%),
+      var(--text-color, rgba(255, 255, 255, 0.45)) var(--word-progress, 0%)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    transform: scale(1.05);
+    filter: drop-shadow(0 0 10px var(--active-color-glow, rgba(56, 189, 248, 0.6)));
+    font-weight: 800;
+  }
+
+  .karaoke-word.upcoming {
+    color: var(--text-color, rgba(255, 255, 255, 0.45));
+    opacity: 0.65;
+  }
+
+  /* ========================================================================= */
+  /* 💊 3. Mode HUD Compact (Dynamic Island Capsule)                           */
+  /* ========================================================================= */
+  .mode-hud {
+    background: rgba(15, 15, 20, 0.92) !important;
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65) !important;
+    border-radius: 24px !important;
+    padding: 6px 14px !important;
+    justify-content: center;
+  }
+
+  .hud-capsule-layout {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    justify-content: center;
+    gap: 3px;
+    position: relative;
+    z-index: 10;
+  }
+
+  .hud-top-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .hud-source-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.6);
+    font-weight: 500;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    max-width: 80%;
+  }
+
+  .hud-live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #64748b;
+    flex-shrink: 0;
+  }
+
+  .hud-live-dot.pulsing {
+    background: #38bdf8;
+    box-shadow: 0 0 8px #38bdf8;
+    animation: hud-dot-pulse 2s infinite ease-in-out;
+  }
+
+  @keyframes hud-dot-pulse {
+    0%, 100% { opacity: 0.7; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.3); }
+  }
+
+  .hud-actions {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .hud-action-btn {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+  }
+
+  .hud-action-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  .hud-active-verse {
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-shadow: 0 0 10px rgba(56, 189, 248, 0.4), 0 1px 3px #000;
+  }
+
+  .hud-next-verse {
+    font-size: 10.5px;
+    opacity: 0.5;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-shadow: 0 1px 2px #000;
+  }
+
+  .hud-idle-text {
+    opacity: 0.6;
+    font-size: 12px;
+  }
+
+  .btn-hud:hover {
+    background: rgba(56, 189, 248, 0.25);
+    color: #38bdf8;
   }
 </style>

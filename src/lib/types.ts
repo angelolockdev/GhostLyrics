@@ -1,7 +1,14 @@
+export interface LyricWord {
+  text: string;
+  startTimeMs: number;
+  endTimeMs: number;
+}
+
 export interface LyricLine {
   startTimeMs: number;
   endTimeMs?: number;
   text: string;
+  words?: LyricWord[];
 }
 
 export interface SongMetadata {
@@ -45,7 +52,8 @@ export interface LyricsData {
   isSynced?: boolean;
 }
 
-export type DisplayMode = "standard" | "glass" | "ghost";
+export type DisplayMode = "standard" | "glass" | "ghost" | "hud";
+export type AuroraMode = "fluid" | "eco" | "off";
 
 export interface AppSettings {
   displayMode: DisplayMode;
@@ -56,8 +64,10 @@ export interface AppSettings {
   backgroundColor: string;
   timeOffsetMs: number;
   hotkey: string;
+  hudHotkey?: string;
   clickThrough: boolean;
   autoCheckUpdates?: boolean;
+  auroraMode?: AuroraMode;
 }
 
 export interface UpdateInfo {
