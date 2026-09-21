@@ -256,14 +256,14 @@
 
           const drift = media.positionMs - currentEstimated;
 
-          if (!playback.isPlaying || Math.abs(drift) > 500) {
-            // Recalage immédiat si pause ou seek franc (> 500ms)
+          if (!playback.isPlaying || Math.abs(drift) > 200) {
+            // Recalage direct si pause, seek ou écart significatif (> 200ms)
             playback.positionMs = media.positionMs;
             playback.lastUpdatedMs = now;
             lastInterpolatedPositionMs = media.positionMs + settings.timeOffsetMs;
-          } else if (Math.abs(drift) > 30) {
-            // Dérive modérée : lissage progressif sans jamais faire reculer le temps
-            const adjusted = currentEstimated + (drift * 0.25);
+          } else if (Math.abs(drift) > 15) {
+            // Dérive : correction dynamique vive (85% du drift pour coller immédiatement au chant)
+            const adjusted = currentEstimated + (drift * 0.85);
             playback.positionMs = playback.isPlaying ? Math.max(adjusted, currentEstimated) : adjusted;
             playback.lastUpdatedMs = now;
           }
@@ -369,7 +369,8 @@
     let currentPos = 0;
     if (playback.isPlaying) {
       const elapsed = Date.now() - playback.lastUpdatedMs;
-      currentPos = playback.positionMs + (elapsed * playback.playbackRate) + settings.timeOffsetMs;
+      // Anticipation dynamique de 60ms pour compenser le buffer audio Windows/Bluetooth
+      currentPos = playback.positionMs + (elapsed * playback.playbackRate) + settings.timeOffsetMs + 60;
       // En lecture continue, l'horloge des paroles ne doit jamais régresser
       if (currentPos >= lastInterpolatedPositionMs) {
         lastInterpolatedPositionMs = currentPos;
@@ -522,9 +523,9 @@
       } catch (e) {}
     }
 
-    // 2. Démarrage de la boucle d'interpolation et du polling à 350ms
+    // 2. Démarrage de la boucle d'interpolation et du polling à 100ms pour une réactivité instantanée
     animationFrameId = requestAnimationFrame(updateInterpolation);
-    pollIntervalId = window.setInterval(pollMedia, 350);
+    pollIntervalId = window.setInterval(pollMedia, 100);
     pollMedia();
 
     // 3. Écouteurs d'événements Tauri
@@ -1419,73 +1420,99 @@
     overflow-wrap: break-word;
     max-width: 94%;
     margin: 0 auto;
-    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease, filter 0.35s ease, color 0.3s ease;
-    will-change: transform, opacity, filter;
-    /* Ombres haute intensité : garantit une lisibilité totale même sans aucun fond */
+    position: relative;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease, color 0.3s ease;
+    will-change: transform, opacity;
+    /* Ombre nette, fine et soignée : lisibilité parfaite sur fond blanc ou noir sans taches noires */
     text-shadow:
-      0 2px 4px rgba(0, 0, 0, 0.95),
-      0 0 8px rgba(0, 0, 0, 0.9),
-      0 0 2px #000000;
+      0 1px 2px rgba(0, 0, 0, 0.75),
+      0 0 1px rgba(0, 0, 0, 0.85);
   }
 
-  /* Échelonnage cinétique et profondeur de champ (style Apple Music Sing) */
+  /* 🌊 Ligne active : Effet de vague cinétique lors du passage */
   .lyric-line.dist-0,
   .lyric-line.active {
-    font-weight: 800;
-    transform: scale(1.08) translateY(-2px);
+    font-weight: 750;
+    transform: scale(1.05);
     opacity: 1;
-    filter: none;
-    animation: line-spring-entry 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    animation: line-wave-pass 0.48s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Balayage de vague lumineuse fluide à l'activation d'un vers */
+  .lyric-line.active::after {
+    content: "";
+    position: absolute;
+    inset: -2px -24px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--active-color-glow, rgba(56, 189, 248, 0.2)) 25%,
+      rgba(255, 255, 255, 0.65) 50%,
+      var(--active-color-glow, rgba(56, 189, 248, 0.2)) 75%,
+      transparent 100%
+    );
+    transform: translateX(-100%);
+    animation: wave-pass-sheen 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    pointer-events: none;
+    border-radius: 9999px;
+    filter: blur(4px);
+  }
+
+  @keyframes line-wave-pass {
+    0% {
+      transform: translateY(8px) scale(0.97);
+      opacity: 0.65;
+    }
+    60% {
+      transform: translateY(-2px) scale(1.07);
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(0) scale(1.05);
+      opacity: 1;
+    }
+  }
+
+  @keyframes wave-pass-sheen {
+    0% {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+    30% {
+      opacity: 0.9;
+    }
+    100% {
+      transform: translateX(100%);
+      opacity: 0;
+    }
   }
 
   /* Ligne active classique (sans karaoké mot-à-mot) */
   .lyric-line.active:not(.has-karaoke) {
     text-shadow:
-      0 0 18px var(--active-color-glow, rgba(56, 189, 248, 0.65)),
-      0 2px 6px #000000,
-      0 0 8px #000000,
-      0 0 2px #000000;
+      0 0 16px var(--active-color-glow, rgba(56, 189, 248, 0.65)),
+      0 1px 3px rgba(0, 0, 0, 0.85);
   }
 
-  /* Ligne active avec karaoké mot-à-mot : text-shadow désactivé sur le parent pour ne pas salir les mots suivants */
+  /* Ligne active avec karaoké mot-à-mot : text-shadow désactivé sur le parent pour propreté totale */
   .lyric-line.active.has-karaoke {
     text-shadow: none;
   }
 
-  /* Anticipation immédiate (vers précédent et vers suivant) */
+  /* Échelonnage doux sans aucun flou (élimine toute bavure sombre sur fond clair) */
   .lyric-line.dist-1 {
-    opacity: 0.70;
+    opacity: 0.65;
     transform: scale(0.96);
-    filter: none;
   }
 
-  /* Retrait moyen */
   .lyric-line.dist-2 {
-    opacity: 0.38;
-    transform: scale(0.91);
-    filter: blur(0.75px);
+    opacity: 0.35;
+    transform: scale(0.92);
   }
 
-  /* Fond diffus */
   .lyric-line.dist-3 {
     opacity: 0.18;
-    transform: scale(0.86);
-    filter: blur(1.8px);
-  }
-
-  @keyframes line-spring-entry {
-    0% {
-      transform: scale(0.98) translateY(3px);
-      filter: brightness(0.92);
-    }
-    60% {
-      transform: scale(1.10) translateY(-3px);
-      filter: brightness(1.12);
-    }
-    100% {
-      transform: scale(1.08) translateY(-2px);
-      filter: brightness(1);
-    }
+    transform: scale(0.88);
   }
 
   .lyric-line.interactive {
@@ -1696,19 +1723,17 @@
   }
 
   .karaoke-word {
-    display: inline-block;
+    display: inline;
     white-space: pre-wrap;
-    transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.16s ease;
-    will-change: transform, filter;
+    position: relative;
+    transition: filter 0.16s ease, color 0.16s ease;
   }
 
   .karaoke-word.completed {
     color: var(--active-color, #38bdf8);
-    transform: scale(1.02);
     text-shadow:
-      0 0 14px var(--active-color-glow, rgba(56, 189, 248, 0.65)),
-      0 2px 4px rgba(0, 0, 0, 0.95),
-      0 0 2px #000000;
+      0 0 12px var(--active-color-glow, rgba(56, 189, 248, 0.6)),
+      0 1px 2px rgba(0, 0, 0, 0.85);
   }
 
   .karaoke-word.singing {
@@ -1717,24 +1742,21 @@
       var(--active-color, #38bdf8) 0%,
       var(--active-color, #38bdf8) calc(var(--word-progress, 0%) - 2%),
       #ffffff var(--word-progress, 0%),
-      rgba(255, 255, 255, 0.72) calc(var(--word-progress, 0%) + 1.5%),
-      rgba(255, 255, 255, 0.72) 100%
+      rgba(255, 255, 255, 0.75) calc(var(--word-progress, 0%) + 2%),
+      rgba(255, 255, 255, 0.75) 100%
     );
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    transform: scale(1.12) translateY(-2px);
-    filter: drop-shadow(0 0 12px var(--active-color-glow, rgba(56, 189, 248, 0.75))) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.95));
-    font-weight: 800;
+    filter: drop-shadow(0 0 10px var(--active-color-glow, rgba(56, 189, 248, 0.75))) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
   }
 
   .karaoke-word.upcoming {
     color: rgba(255, 255, 255, 0.72);
     opacity: 1;
-    transform: scale(1);
     text-shadow:
-      0 2px 4px rgba(0, 0, 0, 0.9),
-      0 0 2px #000000;
+      0 1px 2px rgba(0, 0, 0, 0.8),
+      0 0 1px rgba(0, 0, 0, 0.9);
   }
 
   /* ========================================================================= */

@@ -168,9 +168,9 @@ pub fn estimate_syllables_for_line(text: &str, start_time_ms: i64, end_time_ms: 
     }
 
     let total_duration = (end_time_ms - start_time_ms).max(300);
-    // Marge de respiration en fin de phrase (12% de la durée, min 100ms, max 350ms)
-    let breath_pause_ms = ((total_duration as f64) * 0.12).clamp(100.0, 350.0) as i64;
-    let singing_duration = (total_duration - breath_pause_ms).max(180);
+    // Marge de respiration légère (4% de la durée, min 40ms, max 150ms pour couvrir tout le chant)
+    let breath_pause_ms = ((total_duration as f64) * 0.04).clamp(40.0, 150.0) as i64;
+    let singing_duration = (total_duration - breath_pause_ms).max(200);
 
     // Calcul du poids syllabique de chaque mot
     let mut weights: Vec<f64> = Vec::with_capacity(raw_tokens.len());
