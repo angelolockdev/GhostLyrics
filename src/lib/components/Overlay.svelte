@@ -661,7 +661,7 @@
   data-tauri-drag-region
 >
   <!-- Halo Aurora Glow Réactif (Fluid Mesh Gradient) -->
-  {#if settings.auroraMode !== "off" && settings.displayMode !== "ghost"}
+  {#if settings.auroraMode !== "off"}
     <div
       class="aurora-container {settings.auroraMode === 'eco' ? 'eco' : 'fluid'}"
       aria-hidden="true"
@@ -714,10 +714,11 @@
       </div>
 
       <!-- Vers Actif en Karaoké Mot-à-Mot -->
-      <div class="hud-active-verse" style="color: {settings.activeColor};" data-tauri-drag-region>
-        {#if currentLineIndex >= 0 && lyrics[currentLineIndex]}
-          {@const activeLine = lyrics[currentLineIndex]}
-          {#if activeLine.words && activeLine.words.length > 0}
+      {#if currentLineIndex >= 0 && lyrics[currentLineIndex]}
+        {@const activeLine = lyrics[currentLineIndex]}
+        {@const hasWords = activeLine.words && activeLine.words.length > 0}
+        <div class="hud-active-verse {hasWords ? 'has-karaoke' : ''}" style="color: {settings.activeColor};" data-tauri-drag-region>
+          {#if hasWords}
             <span class="karaoke-words-container">
               {#each activeLine.words as word, wIdx}
                 {@const status = getWordStatus(word, interpolatedPositionMs)}
@@ -730,10 +731,12 @@
           {:else}
             {activeLine.text}
           {/if}
-        {:else}
+        </div>
+      {:else}
+        <div class="hud-active-verse" style="color: {settings.activeColor};" data-tauri-drag-region>
           <span class="hud-idle-text">🎵 En attente des paroles...</span>
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       <!-- Vers Suivant (Teaser atténué) -->
       {#if currentLineIndex >= 0 && currentLineIndex + 1 < lyrics.length}
@@ -921,9 +924,12 @@
         data-tauri-drag-region
       >
         {#each lyrics as line, index}
+          {@const dist = currentLineIndex >= 0 ? Math.abs(index - currentLineIndex) : 1}
+          {@const isActive = index === currentLineIndex}
+          {@const hasWords = isActive && line.words && line.words.length > 0}
           <div
             bind:this={lineElements[index]}
-            class="lyric-line {index === currentLineIndex ? 'active' : ''} {isManualScrolling ? 'interactive' : ''}"
+            class="lyric-line {isActive ? 'active' : ''} {isManualScrolling ? 'interactive' : ''} dist-{Math.min(dist, 3)} {hasWords ? 'has-karaoke' : ''}"
             role="button"
             tabindex="0"
             onclick={() => scrollToLine(index)}
@@ -934,11 +940,10 @@
               }
             }}
             style="
-              color: {index === currentLineIndex ? settings.activeColor : settings.textColor};
-              font-size: {index === currentLineIndex ? settings.fontSize * 1.16 : settings.fontSize}px;
+              color: {isActive ? settings.activeColor : settings.textColor};
             "
           >
-            {#if index === currentLineIndex && line.words && line.words.length > 0}
+            {#if hasWords}
               <span class="karaoke-words-container">
                 {#each line.words as word, wIdx}
                   {@const status = getWordStatus(word, interpolatedPositionMs)}
@@ -1069,6 +1074,17 @@
     -webkit-backdrop-filter: none !important;
     border: none !important;
     box-shadow: none !important;
+  }
+
+  /* En mode Fantôme : l'Aurora Glow devient un halo nébuleux éthéré très diffus sous les paroles */
+  .mode-ghost .aurora-container {
+    opacity: 0.65;
+    pointer-events: none;
+  }
+
+  .mode-ghost .aurora-blob {
+    opacity: 0.6;
+    filter: blur(72px);
   }
 
   /* En mode Fantôme, l'en-tête est très discret quand affiché */
@@ -1331,9 +1347,10 @@
   .lyric-line {
     text-align: center;
     padding: 6px 16px;
-    transition: all 0.3s ease;
     font-weight: 600;
     line-height: 1.4;
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease, filter 0.35s ease, color 0.3s ease;
+    will-change: transform, opacity, filter;
     /* Ombres haute intensité : garantit une lisibilité totale même sans aucun fond */
     text-shadow:
       0 2px 4px rgba(0, 0, 0, 0.95),
@@ -1341,15 +1358,64 @@
       0 0 2px #000000;
   }
 
+  /* Échelonnage cinétique et profondeur de champ (style Apple Music Sing) */
+  .lyric-line.dist-0,
   .lyric-line.active {
     font-weight: 800;
-    transform: scale(1.06);
-    /* Halo lumineux accentué + contour noir profond */
+    transform: scale(1.08) translateY(-2px);
+    opacity: 1;
+    filter: none;
+    animation: line-spring-entry 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  /* Ligne active classique (sans karaoké mot-à-mot) */
+  .lyric-line.active:not(.has-karaoke) {
     text-shadow:
-      0 0 16px rgba(56, 189, 248, 0.6),
+      0 0 18px var(--active-color-glow, rgba(56, 189, 248, 0.65)),
       0 2px 6px #000000,
       0 0 8px #000000,
       0 0 2px #000000;
+  }
+
+  /* Ligne active avec karaoké mot-à-mot : text-shadow désactivé sur le parent pour ne pas salir les mots suivants */
+  .lyric-line.active.has-karaoke {
+    text-shadow: none;
+  }
+
+  /* Anticipation immédiate (vers précédent et vers suivant) */
+  .lyric-line.dist-1 {
+    opacity: 0.70;
+    transform: scale(0.96);
+    filter: none;
+  }
+
+  /* Retrait moyen */
+  .lyric-line.dist-2 {
+    opacity: 0.38;
+    transform: scale(0.91);
+    filter: blur(0.75px);
+  }
+
+  /* Fond diffus */
+  .lyric-line.dist-3 {
+    opacity: 0.18;
+    transform: scale(0.86);
+    filter: blur(1.8px);
+  }
+
+  @keyframes line-spring-entry {
+    0% {
+      transform: scale(0.98) translateY(3px);
+      filter: brightness(0.92);
+    }
+    60% {
+      transform: scale(1.10) translateY(-3px);
+      filter: brightness(1.12);
+    }
+    100% {
+      transform: scale(1.08) translateY(-2px);
+      filter: brightness(1);
+    }
   }
 
   .lyric-line.interactive {
@@ -1562,32 +1628,43 @@
   .karaoke-word {
     display: inline-block;
     white-space: pre-wrap;
-    transition: transform 0.12s ease-out;
+    transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.16s ease;
+    will-change: transform, filter;
   }
 
   .karaoke-word.completed {
     color: var(--active-color, #38bdf8);
-    text-shadow: 0 0 14px var(--active-color-glow, rgba(56, 189, 248, 0.5));
+    transform: scale(1.02);
+    text-shadow:
+      0 0 14px var(--active-color-glow, rgba(56, 189, 248, 0.65)),
+      0 2px 4px rgba(0, 0, 0, 0.95),
+      0 0 2px #000000;
   }
 
   .karaoke-word.singing {
     background: linear-gradient(
       90deg,
       var(--active-color, #38bdf8) 0%,
-      var(--active-color, #38bdf8) var(--word-progress, 0%),
-      var(--text-color, rgba(255, 255, 255, 0.45)) var(--word-progress, 0%)
+      var(--active-color, #38bdf8) calc(var(--word-progress, 0%) - 2%),
+      #ffffff var(--word-progress, 0%),
+      rgba(255, 255, 255, 0.72) calc(var(--word-progress, 0%) + 1.5%),
+      rgba(255, 255, 255, 0.72) 100%
     );
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-    transform: scale(1.05);
-    filter: drop-shadow(0 0 10px var(--active-color-glow, rgba(56, 189, 248, 0.6)));
+    transform: scale(1.12) translateY(-2px);
+    filter: drop-shadow(0 0 12px var(--active-color-glow, rgba(56, 189, 248, 0.75))) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.95));
     font-weight: 800;
   }
 
   .karaoke-word.upcoming {
-    color: var(--text-color, rgba(255, 255, 255, 0.45));
-    opacity: 0.65;
+    color: rgba(255, 255, 255, 0.72);
+    opacity: 1;
+    transform: scale(1);
+    text-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.9),
+      0 0 2px #000000;
   }
 
   /* ========================================================================= */
@@ -1684,6 +1761,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     text-shadow: 0 0 10px rgba(56, 189, 248, 0.4), 0 1px 3px #000;
+  }
+
+  .hud-active-verse.has-karaoke {
+    text-shadow: none;
   }
 
   .hud-next-verse {

@@ -217,7 +217,7 @@
           <span class="mode-icon">👻</span>
           <div class="mode-info">
             <strong>Fantôme Pur</strong>
-            <small>Zéro boîte, zéro fond. Seules les paroles flottent sur votre écran.</small>
+            <small>Zéro boîte, zéro cadre. Paroles cinétiques et halo éthéré flottant librement.</small>
           </div>
         </button>
 
