@@ -1,5 +1,6 @@
 use super::parser::{estimate_syllables_for_line, parse_lrc, LyricLine};
 use super::sanitizer::{get_artist_variants, sanitize_track_title};
+use super::transcripts::TranscriptService;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -57,6 +58,7 @@ struct LyricsOvhResponse {
 pub struct LyricsService {
     client: reqwest::Client,
     cache_dir: PathBuf,
+    transcript_service: TranscriptService,
 }
 
 impl LyricsService {
@@ -66,13 +68,18 @@ impl LyricsService {
             let _ = fs::create_dir_all(&cache_dir);
         }
 
+        let client = reqwest::Client::builder()
+            .user_agent("GhostLyrics/0.2.4 (https://github.com/angelolockdev/GhostLyrics)")
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+
+        let transcript_service = TranscriptService::new(client.clone());
+
         Self {
-            client: reqwest::Client::builder()
-                .user_agent("GhostLyrics/0.1.6 (https://github.com/angelolockdev/GhostLyrics)")
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            client,
             cache_dir,
+            transcript_service,
         }
     }
 
@@ -191,8 +198,37 @@ impl LyricsService {
             }
         }
 
+        // 4. Recherche de transcription anglaise (Podcasts Spotify & Vidéos YouTube)
+        let is_youtube_hint = title.to_lowercase().contains("youtube")
+            || primary_artist.to_lowercase().contains("youtube");
+
+        if let Some((transcript_lines, source_label)) = self
+            .transcript_service
+            .fetch_transcript(&cleaned_title, primary_artist, is_youtube_hint)
+            .await
+        {
+            let final_response = LyricsResponse {
+                id: None,
+                track_name: cleaned_title.clone(),
+                artist_name: primary_artist.to_string(),
+                album_name: album.map(|a| a.to_string()),
+                duration: duration_sec,
+                instrumental: false,
+                plain_lyrics: None,
+                synced_lyrics: None,
+                lines: transcript_lines,
+                source: source_label.to_string(),
+                is_synced: true,
+            };
+
+            if let Ok(serialized) = serde_json::to_string_pretty(&final_response) {
+                let _ = fs::write(&cache_file, serialized);
+            }
+            return Ok(final_response);
+        }
+
         Err(format!(
-            "Paroles introuvables pour '{}' de '{}' (testé sur LRCLIB & lyrics.ovh)",
+            "Paroles ou transcriptions introuvables pour '{}' de '{}'",
             cleaned_title, primary_artist
         ))
     }

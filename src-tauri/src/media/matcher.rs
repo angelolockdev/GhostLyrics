@@ -95,6 +95,19 @@ pub fn is_generic_or_empty_artist(artist: &str) -> bool {
         || lower == "artiste inconnu"
 }
 
+pub fn is_podcast_or_talk(title: &str, artist: &str) -> bool {
+    let combined = format!("{} {}", title, artist).to_lowercase();
+    combined.contains("podcast")
+        || combined.contains("interview")
+        || combined.contains("tedx")
+        || combined.contains("ted talk")
+        || combined.contains("conference")
+        || combined.contains("conférence")
+        || combined.contains("talk show")
+        || combined.contains("english")
+        || combined.contains("learn english")
+}
+
 pub fn clean_youtube_title(raw: &str) -> String {
     let re_suffix = YOUTUBE_SUFFIX_RE.get_or_init(|| {
         Regex::new(r"(?i)\s*-\s*YouTube(?:\s*Music)?\s*$").unwrap()
@@ -155,7 +168,12 @@ pub fn is_valid_music_candidate(
         return false;
     }
 
-    // Rejet strict des vidéos YouTube / Web non-musicales (tutos, gaming, podcasts...)
+    // Accepter les podcasts, interviews et conférences en anglais pour la transcription
+    if is_podcast_or_talk(&clean_title, artist) {
+        return true;
+    }
+
+    // Rejet strict des vidéos YouTube / Web non-musicales (tutos, gaming, vlogs, trailers...)
     for re in get_non_music_regexes() {
         if re.is_match(&clean_title) || re.is_match(artist) {
             return false;

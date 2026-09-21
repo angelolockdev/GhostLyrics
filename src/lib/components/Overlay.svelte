@@ -326,15 +326,28 @@
         currentLyricsSource = "Instrumental";
         isCurrentSynced = true;
       } else {
-        lyrics = [
-          { startTimeMs: 0, text: `Aucune parole trouvée pour "${title}"` },
-          { startTimeMs: 4000, text: "Vérifiez le titre ou lancez un autre morceau" },
-        ];
+        const isPodcastOrVideo = title.toLowerCase().includes("podcast") || artist.toLowerCase().includes("podcast") || title.toLowerCase().includes("interview");
+        if (isPodcastOrVideo) {
+          lyrics = [
+            { startTimeMs: 0, text: `Transcription anglaise non disponible pour "${title}"` },
+            { startTimeMs: 4000, text: "Ce podcast ou vidéo ne dispose pas encore de sous-titres" },
+          ];
+        } else {
+          lyrics = [
+            { startTimeMs: 0, text: `Aucune parole trouvée pour "${title}"` },
+            { startTimeMs: 4000, text: "Vérifiez le titre ou lancez un autre morceau" },
+          ];
+        }
         currentLyricsSource = "";
       }
     } catch (err) {
-      console.error("Erreur recherche paroles:", err);
-      lyrics = [{ startTimeMs: 0, text: "Paroles introuvables (LRCLIB & lyrics.ovh)" }];
+      console.error("Erreur recherche paroles/transcription:", err);
+      const isPodcastOrVideo = title.toLowerCase().includes("podcast") || artist.toLowerCase().includes("podcast");
+      if (isPodcastOrVideo) {
+        lyrics = [{ startTimeMs: 0, text: "Transcription non disponible pour cet épisode" }];
+      } else {
+        lyrics = [{ startTimeMs: 0, text: "Paroles ou transcription introuvables" }];
+      }
       currentLyricsSource = "";
     } finally {
       isFetchingLyrics = false;
@@ -825,11 +838,21 @@
           {#if isFetchingLyrics}
             <span class="badge badge-loading" title="Recherche des paroles en cours...">⏳</span>
           {:else if currentLyricsSource}
+            {@const isPodcast = currentLyricsSource.includes("Podcast")}
+            {@const isVideo = currentLyricsSource.includes("YouTube")}
             <span
-              class="badge {isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
-              title={isCurrentSynced ? `Synchronisé (.lrc) via ${currentLyricsSource}` : `Défilement temporel estimé via ${currentLyricsSource}`}
+              class="badge {isPodcast ? 'badge-podcast' : isVideo ? 'badge-video' : isCurrentSynced ? 'badge-synced' : 'badge-paced'}"
+              title={isPodcast ? `Transcription anglaise de podcast (${currentLyricsSource})` : isVideo ? `Sous-titres anglais synchronisés (${currentLyricsSource})` : isCurrentSynced ? `Synchronisé (.lrc) via ${currentLyricsSource}` : `Défilement temporel estimé via ${currentLyricsSource}`}
             >
-              {isCurrentSynced ? '🟢 LRC' : '🟡 Texte'}
+              {#if isPodcast}
+                🎙️ Podcast
+              {:else if isVideo}
+                📺 Vidéo EN
+              {:else if isCurrentSynced}
+                🟢 LRC
+              {:else}
+                🟡 Texte
+              {/if}
             </span>
           {/if}
 
@@ -1327,6 +1350,18 @@
     background: rgba(34, 197, 94, 0.2);
     color: #4ade80;
     border: 1px solid rgba(34, 197, 94, 0.35);
+  }
+
+  .badge-podcast {
+    background: rgba(168, 85, 247, 0.25);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.4);
+  }
+
+  .badge-video {
+    background: rgba(239, 68, 68, 0.22);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
   }
 
   .badge-paced {
