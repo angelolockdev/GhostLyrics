@@ -516,6 +516,12 @@
       isHeaderHidden = true;
     }
 
+    if (settings.clickThrough) {
+      try {
+        await invoke("set_overlay_click_through", { enable: true });
+      } catch (e) {}
+    }
+
     // 2. Démarrage de la boucle d'interpolation et du polling à 350ms
     animationFrameId = requestAnimationFrame(updateInterpolation);
     pollIntervalId = window.setInterval(pollMedia, 350);
@@ -604,6 +610,9 @@
         e.preventDefault();
         const next = settings.displayMode === "hud" ? "standard" : "hud";
         applyDisplayMode(next);
+      } else if (e.ctrlKey && (e.key === "," || e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        handleOpenSettings();
       } else if (e.key === "Escape" && isManualScrolling) {
         e.preventDefault();
         resyncLyrics();
@@ -660,6 +669,13 @@
   "
   data-tauri-drag-region
 >
+  {#if settings.clickThrough}
+    <div class="click-through-indicator" aria-hidden="true" title="Mode clics traversants actif ({settings.hotkey || 'Ctrl+Shift+L'} pour déverrouiller)">
+      <span class="indicator-icon">🛡️</span>
+      <span class="indicator-text">Traversant ({settings.hotkey || 'Ctrl+Shift+L'})</span>
+    </div>
+  {/if}
+
   <!-- Halo Aurora Glow Réactif (Fluid Mesh Gradient) -->
   {#if settings.auroraMode !== "off"}
     <div
@@ -697,7 +713,7 @@
           <button
             class="hud-action-btn"
             onclick={handleOpenSettings}
-            title="Paramètres (⚙️)"
+            title="Paramètres (Ctrl+,)"
             aria-label="Paramètres"
           >
             ⚙️
@@ -709,6 +725,14 @@
             aria-label="Réduire"
           >
             —
+          </button>
+          <button
+            class="hud-action-btn hud-close-btn"
+            onclick={handleCloseApp}
+            title="Quitter GhostLyrics"
+            aria-label="Quitter"
+          >
+            ✕
           </button>
         </div>
       </div>
@@ -904,6 +928,14 @@
         </button>
         <button
           class="mini-dock-btn"
+          onclick={handleOpenSettings}
+          title="Ouvrir les paramètres (Ctrl+,)"
+          aria-label="Paramètres"
+        >
+          ⚙️
+        </button>
+        <button
+          class="mini-dock-btn"
           onclick={toggleHeaderVisibility}
           title="Afficher les menus et contrôles"
           aria-label="Afficher les menus"
@@ -912,6 +944,14 @@
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
+        </button>
+        <button
+          class="mini-dock-btn"
+          onclick={handleMinimize}
+          title="Réduire dans la zone de notification"
+          aria-label="Réduire"
+        >
+          —
         </button>
       </div>
     {/if}
@@ -1000,11 +1040,37 @@
     overflow: hidden;
     user-select: none;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     transition: background 0.25s ease, border 0.25s ease, box-shadow 0.25s ease;
   }
 
   .overlay-container.header-hidden {
     padding-top: 4px;
+  }
+
+  /* Badge flottant indicatif du mode Clics Traversants */
+  .click-through-indicator {
+    position: absolute;
+    top: 6px;
+    left: 10px;
+    z-index: 85;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(15, 23, 42, 0.82);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    border-radius: 9999px;
+    padding: 2px 9px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #38bdf8;
+    pointer-events: none;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55), 0 0 10px rgba(56, 189, 248, 0.2);
+    animation: fadeIn 0.2s ease;
   }
 
   /* Mini Dock Flottant : Apparaît quand les menus sont masqués */
@@ -1328,8 +1394,8 @@
     position: relative;
     flex: 1;
     overflow: hidden;
-    mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.85) 10%, black 22%, black 78%, rgba(0, 0, 0, 0.85) 90%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.85) 10%, black 22%, black 78%, rgba(0, 0, 0, 0.85) 90%, transparent 100%);
   }
 
   .lyrics-list {
@@ -1348,7 +1414,11 @@
     text-align: center;
     padding: 6px 16px;
     font-weight: 600;
-    line-height: 1.4;
+    line-height: 1.45;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    max-width: 94%;
+    margin: 0 auto;
     transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease, filter 0.35s ease, color 0.3s ease;
     will-change: transform, opacity, filter;
     /* Ombres haute intensité : garantit une lisibilité totale même sans aucun fond */
@@ -1753,6 +1823,11 @@
     background: rgba(255, 255, 255, 0.15);
   }
 
+  .hud-close-btn:hover {
+    color: #ffffff !important;
+    background: #ef4444 !important;
+  }
+
   .hud-active-verse {
     font-size: 13.5px;
     font-weight: 700;
@@ -1760,6 +1835,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    mask-image: linear-gradient(to right, black 92%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black 92%, transparent 100%);
     text-shadow: 0 0 10px rgba(56, 189, 248, 0.4), 0 1px 3px #000;
   }
 

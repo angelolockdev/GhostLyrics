@@ -413,7 +413,7 @@
       <div class="info-list">
         <div class="info-item">
           <strong>🖱️ Contrôles d'en-tête :</strong>
-          <span>Utilisez <code>⚙️</code> pour les paramètres, <code>—</code> pour réduire dans la barre d'icônes cachées, et <code>✕</code> pour quitter.</span>
+          <span>Utilisez <code>⚙️</code> pour les paramètres (ou <code>Ctrl + ,</code>), <code>—</code> pour réduire dans la barre d'icônes cachées, et <code>✕</code> pour quitter.</span>
         </div>
         <div class="info-item">
           <strong>📥 Barre d'icônes cachées (System Tray) :</strong>
@@ -421,11 +421,15 @@
         </div>
         <div class="info-item">
           <strong>👻 Raccourci global Fantôme :</strong>
-          <span><code>Ctrl + Shift + L</code> verrouille l'overlay en mode transparent aux clics.</span>
+          <span><code>Ctrl + Shift + L</code> verrouille l'overlay en mode transparent aux clics (clics traversants vers vos jeux/applications).</span>
         </div>
         <div class="info-item">
           <strong>💊 Raccourci global HUD :</strong>
           <span><code>Ctrl + Shift + H</code> commute instantanément entre le grand overlay et la capsule compacte.</span>
+        </div>
+        <div class="info-item">
+          <strong>🎯 Raccourcis clavier directs :</strong>
+          <span><code>Échap</code> pour resynchroniser instantanément au vers en direct, <code>↑</code> / <code>↓</code> pour parcourir les paroles manuellement.</span>
         </div>
       </div>
     </div>
@@ -434,7 +438,7 @@
     <div class="card card-update">
       <div class="card-title-row">
         <h3>🔄 Mises à jour du logiciel</h3>
-        <span class="version-pill">v{updateInfo?.currentVersion || "0.1.4"}</span>
+        <span class="version-pill">v{updateInfo?.currentVersion || "0.2.1"}</span>
       </div>
       <p class="description">
         GhostLyrics vérifie directement les versions publiées sur GitHub Releases et installe automatiquement les nouvelles fonctionnalités.
