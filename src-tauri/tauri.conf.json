@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "GhostLyrics",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "identifier": "com.ghostlyrics.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -27,7 +27,7 @@
       {
         "label": "settings",
         "title": "GhostLyrics — Paramètres",
-        "url": "index.html#/settings",
+        "url": "index.html",
         "visible": false,
         "decorations": true,
         "width": 660,

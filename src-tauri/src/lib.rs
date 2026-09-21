@@ -20,6 +20,14 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState { lyrics_service })
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "settings" {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_media_state,
             fetch_song_lyrics,
@@ -80,10 +88,7 @@ pub fn run() {
                             }
                         }
                         "settings" => {
-                            if let Some(win) = app.get_webview_window("settings") {
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
+                            let _ = show_settings_window(app.clone());
                         }
                         "quit" => {
                             app.exit(0);

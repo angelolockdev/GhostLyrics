@@ -438,7 +438,7 @@
     <div class="card card-update">
       <div class="card-title-row">
         <h3>🔄 Mises à jour du logiciel</h3>
-        <span class="version-pill">v{updateInfo?.currentVersion || "0.2.2"}</span>
+        <span class="version-pill">v{updateInfo?.currentVersion || "0.2.3"}</span>
       </div>
       <p class="description">
         GhostLyrics vérifie directement les versions publiées sur GitHub Releases et installe automatiquement les nouvelles fonctionnalités.

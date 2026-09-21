@@ -34,11 +34,29 @@ pub fn set_overlay_click_through(app: AppHandle, enabled: bool) -> Result<(), St
 #[tauri::command]
 pub fn show_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.unminimize();
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
         Ok(())
     } else {
-        Err("Fenêtre de paramètres introuvable".to_string())
+        // Recréation dynamique si la fenêtre a été fermée ou détruite
+        let window = tauri::WebviewWindowBuilder::new(
+            &app,
+            "settings",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("GhostLyrics — Paramètres")
+        .inner_size(660.0, 660.0)
+        .min_inner_size(480.0, 400.0)
+        .resizable(true)
+        .decorations(true)
+        .build()
+        .map_err(|e| format!("Impossible de créer la fenêtre des paramètres : {}", e))?;
+
+        let _ = window.unminimize();
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        Ok(())
     }
 }
 
